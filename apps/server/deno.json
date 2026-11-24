@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "tasks": {
+    "dev": "deno run --allow-net --allow-read --allow-env server.ts",
+    "test": "deno test --allow-net --allow-read --allow-env ./realtime/ ./tests/"
+  },
+  "imports": {
+    "remix/": "npm:remix/",
+    "yjs": "npm:yjs"
+  }
+}

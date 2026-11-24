@@ -1,0 +1,22 @@
+# Deno
+.deno/
+
+# Node / Remix
+node_modules/
+dist/
+build/
+.npm/
+
+# Env
+.env
+.env.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs / temp
+*.log
+tmp/

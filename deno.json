@@ -1,0 +1,7 @@
+{
+  "workspace": ["apps/server"],
+  "tasks": {
+    "dev": "deno run --allow-net --allow-read --allow-env apps/server/server.ts",
+    "test": "deno test --allow-net --allow-read --allow-env tests/"
+  }
+}
