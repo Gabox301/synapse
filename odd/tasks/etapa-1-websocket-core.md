@@ -14,10 +14,10 @@ Stack decidido: Deno 2 como runtime, Remix v3 full-stack para HTTP/UI, WS propio
 
 ## Tasks
 
-- T1 (S1,S6,S7, route: inline, commit: -): Inicializar repo git + workspace Deno + scaffold Remix v3 + Docker Compose base
-- T2 (S6,S7, route: inline, commit: -): Implementar `server.ts` bifurcado + WS core (rooms, heartbeat, límites, handshake con ticket prueba)
-- T3 (S2,S6, route: inline, commit: -): Dejar handshake listo para auth real sin rework (ticket, Origin, snp.v1, 401/403/400)
-- T4 (S5,S6, route: inline, commit: -): Verificación enfocada (conexión, broadcast, rechazo sin ticket)
+- T1 (S1,S6,S7, route: inline, commit: 0347580): Inicializar repo git + workspace Deno + scaffold Remix v3 + Docker Compose base
+- T2 (S6,S7, route: inline, commit: 141d84f): Implementar `server.ts` bifurcado + WS core (rooms, heartbeat, límites, handshake con ticket prueba)
+- T3 (S2,S6, route: inline, commit: 141d84f): Dejar handshake listo para auth real sin rework (ticket, Origin, snp.v1, 401/403/400)
+- T4 (S5,S6, route: inline, commit: 187524b): Verificación enfocada (conexión, broadcast, rechazo sin ticket)
 
 ## Log
 
@@ -26,3 +26,4 @@ Stack decidido: Deno 2 como runtime, Remix v3 full-stack para HTTP/UI, WS propio
 - L3: InsForge descartado para realtime del editor (solo evaluable para shell); se mantiene WS propio + SNP + ack
 - L4: Tooling 2026-11-24: WSL sin repo git, sin Deno, node solo como `node.exe` Windows v24.22.1. Bloquea T1 hasta definir instalación/WSL vs Windows
 - L5: Verificación Etapa 1 (2026-11-24, live, sin tests automatizados aún): `GET /` → `synapse ok`; `GET /api/health` → `{"ok":true}`; `GET /ws/documents/doc1` sin ticket → 401; WS `snp.v1` con ticket → `document:joined` (seq 0) + `connection:pong` + broadcast entre 2 clientes OK. Deps: `remix 3.3.0`, `yjs 13.6.33`, `deno 2.9.8`, `node 26.13.1`. Cambios sin commit en `feature/etapa-1-ws-core`.
+- L6: Commits Etapa 1 (2026-11-24): 0347580 chore(repo), 141d84f feat(ws-core), 187524b docs(etapa-1), 639976c chore(deps). `git status` limpio en `feature/etapa-1-ws-core`. Autorizado por usuario: "Haz los commits solamente, actualiza el checkpoint. Continuaremos luego."
