@@ -139,6 +139,48 @@ export async function saveSnapshot(
 }
 
 /** Borra updates con seq < corte. Devuelve cantidad borrada. */
+export interface SnapshotMeta {
+  id: string;
+  kind: string;
+  label: string | null;
+  lastSeq: number;
+  createdAt: string;
+}
+
+export async function getSnapshot(
+  documentId: string,
+  snapshotId: string,
+): Promise<{ state: Uint8Array; lastSeq: number; kind: string } | null> {
+  const { rows } = await getPool().query<{ state: unknown; last_seq: string; kind: string }>(
+    `SELECT state, last_seq, kind FROM document_snapshots
+     WHERE document_id = $1 AND id = $2`,
+    [documentId, snapshotId],
+  );
+  if (rows.length === 0) return null;
+  return { state: toBytes(rows[0].state), lastSeq: Number(rows[0].last_seq), kind: rows[0].kind };
+}
+
+export async function listSnapshots(documentId: string): Promise<SnapshotMeta[]> {
+  const { rows } = await getPool().query<{
+    id: string;
+    kind: string;
+    label: string | null;
+    last_seq: string;
+    created_at: string;
+  }>(
+    `SELECT id, kind, label, last_seq, created_at FROM document_snapshots
+     WHERE document_id = $1 ORDER BY last_seq`,
+    [documentId],
+  );
+  return rows.map((r: { id: string; kind: string; label: string | null; last_seq: string; created_at: string }) => ({
+    id: r.id,
+    kind: r.kind,
+    label: r.label,
+    lastSeq: Number(r.last_seq),
+    createdAt: r.created_at,
+  }));
+}
+
 export async function compactBefore(documentId: string, seqExclusive: number): Promise<number> {
   const { rowCount } = await getPool().query(
     "DELETE FROM document_updates WHERE document_id = $1 AND seq < $2",
