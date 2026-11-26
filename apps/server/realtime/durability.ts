@@ -5,6 +5,7 @@ import * as Y from "yjs";
 
 import { evictDoc, getOrCreateDoc, hasDoc } from "./documents.ts";
 import { compactBefore, getSnapshot, loadDocument, saveBatch, saveSnapshot } from "./persistence.ts";
+import { metrics } from "./metrics.ts";
 
 export interface QueuedUpdate {
   conn: WebSocket;
@@ -123,12 +124,15 @@ export async function flushDocument(documentId: string): Promise<void> {
   st.queue = [];
   try {
     // author_id real llega en Etapa 4 (tickets con identidad); hoy es desconocido.
+    const t0 = Date.now();
     const seqs = await saveBatch(
       documentId,
       batch.map((e) => ({ data: e.update, authorId: null })),
     );
     const lastSeq = seqs[seqs.length - 1] ?? st.persistedSeq;
     st.persistedSeq = lastSeq;
+    metrics.observe("synapse_persist_seconds", (Date.now() - t0) / 1000);
+    metrics.inc("synapse_persist_total");
     const upToByConn = new Map<WebSocket, number>();
     for (const entry of batch) {
       const prev = upToByConn.get(entry.conn) ?? 0;
@@ -137,11 +141,13 @@ export async function flushDocument(documentId: string): Promise<void> {
     for (const [conn, upTo] of upToByConn) {
       if (conn.readyState !== WebSocket.OPEN) continue;
       conn.send(JSON.stringify({ type: "document:ack", payload: { upTo, seq: lastSeq } }));
+      metrics.inc("synapse_acks_total");
     }
     // Snapshot automático por umbral (nunca rompe el path de ack).
     await maybeAutoSnapshot(documentId);
   } catch (err) {
     // Sin commit no hay ack: se reencola al frente para el próximo flush.
+    metrics.inc("synapse_persist_errors_total");
     st.queue.unshift(...batch);
     throw err;
   } finally {

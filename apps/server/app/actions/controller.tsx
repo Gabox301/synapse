@@ -2,6 +2,7 @@ import { render } from "remix/middleware/render";
 import { createController } from "remix/router";
 
 import { hashPassword, verifyPassword } from "../../auth/password.ts";
+import { metrics } from "../../realtime/metrics.ts";
 import { RateLimiter } from "../../realtime/ratelimit.ts";
 import {
   SESSION_COOKIE,
@@ -138,6 +139,11 @@ export default createController(routes, {
       const user = await getUserById(session.userId);
       if (!user) return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
       return Response.json(user);
+    },
+    async metrics() {
+      return new Response(metrics.render(), {
+        headers: { "Content-Type": "text/plain; version=0.0.4" },
+      });
     },
     async createDocument(context) {
       const token = getSessionToken(context.request);

@@ -10,4 +10,5 @@ export const routes = route({
   login: post("/api/login"),
   logout: post("/api/logout"),
   me: get("/api/me"),
+  metrics: get("/api/metrics"),
 });
