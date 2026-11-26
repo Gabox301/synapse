@@ -1,7 +1,7 @@
 import { router } from "./app/router.ts";
 import type { ConnState } from "./realtime/handler.ts";
 import { handleBinary } from "./realtime/handler.ts";
-import { evictDoc } from "./realtime/documents.ts";
+import { enqueueUpdate, ensureLoaded, evictIfEmpty } from "./realtime/durability.ts";
 
 const PORT = Number(Deno.env.get("PORT") ?? "44100");
 const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") ?? "http://localhost:44100").split(",");
@@ -37,16 +37,32 @@ function handleWS(req: Request): Response {
 
   const { socket, response } = Deno.upgradeWebSocket(req, { protocol: "snp.v1" });
 
-  socket.onopen = () => {
+  socket.onopen = async () => {
     let room = rooms.get(documentId);
     if (!room) {
       room = new Set();
       rooms.set(documentId, room);
     }
     room.add(socket);
+    // seq real persistido (Etapa 3); ante fallo de PG se rechaza con 1011.
+    let seq = 0;
+    try {
+      seq = (await ensureLoaded(documentId)).seq;
+    } catch (err) {
+      console.error(`[ws] load ${documentId} falló:`, err);
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({
+          type: "document:error",
+          payload: { code: "INTERNAL", message: "no se pudo cargar el documento" },
+        }));
+        socket.close(1011);
+      }
+      return;
+    }
+    if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({
       type: "document:joined",
-      payload: { documentId, role: "editor", seq: 0 },
+      payload: { documentId, role: "editor", seq },
     }));
   };
 
@@ -54,6 +70,21 @@ function handleWS(req: Request): Response {
 
   socket.onmessage = async (ev) => {
     if (typeof ev.data !== "string") {
+      // Etapa 3: el doc debe estar cargado ANTES de rutear (los mensajes pueden
+      // llegar antes de que termine el ensureLoaded del onopen).
+      try {
+        await ensureLoaded(documentId);
+      } catch (err) {
+        console.error(`[ws] load ${documentId} falló:`, err);
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({
+            type: "document:error",
+            payload: { code: "INTERNAL", message: "no se pudo cargar el documento" },
+          }));
+          socket.close(1011);
+        }
+        return;
+      }
       // Etapa 2: frames binarios SNP v1 (SYNC_STEP1/2, UPDATE, AWARENESS).
       let bytes: Uint8Array | null = null;
       try {
@@ -79,6 +110,9 @@ function handleWS(req: Request): Response {
       const out = handleBinary(bytes, st);
       for (const reply of out.replies) socket.send(reply.slice().buffer);
       if (out.errorJson) socket.send(out.errorJson);
+      if (out.appliedUpdate) {
+        enqueueUpdate(documentId, socket, out.appliedUpdate.cseq, out.appliedUpdate.payload);
+      }
       if (out.broadcast.length > 0) {
         const room = rooms.get(documentId);
         if (room) {
@@ -127,12 +161,19 @@ function handleWS(req: Request): Response {
 
   const leave = () => {
     const room = rooms.get(documentId);
-    if (!room) return;
-    room.delete(socket);
-    if (room.size === 0) {
-      rooms.delete(documentId);
-      evictDoc(documentId);
+    if (!room) {
+      void evictIfEmpty(documentId, undefined).catch((err) =>
+        console.error(`[ws] evict ${documentId} falló:`, err)
+      );
+      return;
     }
+    room.delete(socket);
+    if (room.size === 0) rooms.delete(documentId);
+    // Persiste pendientes antes de liberar memoria (fire-and-forget;
+    // ante caída, el cliente reenvía lo no confirmado por state vector).
+    void evictIfEmpty(documentId, room).catch((err) =>
+      console.error(`[ws] evict ${documentId} falló:`, err)
+    );
   };
   socket.onclose = leave;
   socket.onerror = leave;
