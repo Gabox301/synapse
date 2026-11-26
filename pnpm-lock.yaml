@@ -187,12 +187,27 @@ importers:
 
   apps/server:
     dependencies:
+      '@synapse/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
       '@tiptap/core':
         specifier: ^2.27.3
         version: 2.27.3(@tiptap/pm@2.27.3)
+      '@tiptap/pm':
+        specifier: ^2.27.3
+        version: 2.27.3
       '@tiptap/starter-kit':
         specifier: ^2.27.3
         version: 2.27.3
+      prosemirror-model:
+        specifier: ^1.25.13
+        version: 1.25.13
+      prosemirror-state:
+        specifier: ^1.4.4
+        version: 1.4.4
+      prosemirror-view:
+        specifier: ^1.44.0
+        version: 1.44.0
       remix:
         specifier: ^3.0.0
         version: 3.3.0(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)

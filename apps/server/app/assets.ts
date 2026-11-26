@@ -7,9 +7,13 @@ const rootDir = resolve(import.meta.dirname!, "..", "..", "..");
 export const assets = createAssetServer({
   basePath: "/assets",
   rootDir,
+  // watch:false: el watcher (chokidar) no es fiable sobre /mnt/c (DrvFs/WSL)
+  // y puede dejar promesas de compilación sin resolver. Sin HMR por ahora.
+  watch: false,
   mounts: {
     app: "apps/server/app",
     npm: "apps/server/node_modules",
+    packages: "packages",
   },
   allowFiles: [
     "apps/server/app/routes.ts",
@@ -21,8 +25,13 @@ export const assets = createAssetServer({
     "remix",
     "yjs",
     "y-protocols",
+    "@synapse/sdk",
     "@tiptap/core",
     "@tiptap/starter-kit",
+    "@tiptap/pm",
+    "prosemirror-model",
+    "prosemirror-state",
+    "prosemirror-view",
     "y-prosemirror",
   ],
   denyFiles: [

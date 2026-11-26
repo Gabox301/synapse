@@ -4,8 +4,13 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
+    "@synapse/sdk": "workspace:*",
     "@tiptap/core": "^2.27.3",
+    "@tiptap/pm": "^2.27.3",
     "@tiptap/starter-kit": "^2.27.3",
+    "prosemirror-model": "^1.25.13",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.44.0",
     "remix": "^3.0.0",
     "y-prosemirror": "^1.3.7",
     "y-protocols": "1.0.7",
