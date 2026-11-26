@@ -1,6 +1,5 @@
 // Ruteo de frames binarios SNP v1 (puro y testeable; el socket vive en server.ts).
 import {
-  FRAME_AWARENESS,
   FRAME_SYNC_STEP1,
   FRAME_SYNC_STEP2,
   FRAME_UPDATE,
@@ -13,10 +12,18 @@ import {
 } from "./documents.ts";
 import { relayUpdate } from "./documents.ts";
 
+import type { Role } from "../auth/access.ts";
+
 export interface ConnState {
   documentId: string;
   /** Mensajes desconocidos consecutivos (al tercero se cierra con 4400). */
   unknownCount: number;
+  /** Fijado tras el handshake (Etapa 4); T3 lo exige por mensaje. */
+  auth?: { userId: string; role: Role; name: string; color: string };
+  /** clientIDs de awareness que pertenecen a esta conexión. */
+  awarenessIds: Set<number>;
+  /** Rechazos de rate-limit acumulados (cierra con 4429 al llegar al tope). */
+  rateDrops: number;
 }
 
 export interface RouteOutcome {
@@ -51,6 +58,11 @@ export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
     return ok;
   }
 
+  // Etapa 4: viewers solo leen (SYNC_STEP1) y mandan awareness; el resto
+  // de escritura se descarta con READ_ONLY sin cerrar la conexión.
+  // Sin auth (rutas internas/tests) se permite todo como antes.
+  const readOnly = st.auth?.role === "viewer";
+
   switch (frame.type) {
     case FRAME_SYNC_STEP1: {
       try {
@@ -62,6 +74,10 @@ export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
       return ok;
     }
     case FRAME_SYNC_STEP2: {
+      if (readOnly) {
+        ok.errorJson = errorPayload("READ_ONLY", "el rol viewer no puede enviar updates");
+        return ok;
+      }
       try {
         applyClientUpdate(st.documentId, -1, frame.payload);
       } catch (err) {
@@ -71,6 +87,10 @@ export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
       return ok;
     }
     case FRAME_UPDATE: {
+      if (readOnly) {
+        ok.errorJson = errorPayload("READ_ONLY", "el rol viewer no puede enviar updates");
+        return ok;
+      }
       try {
         applyClientUpdate(st.documentId, frame.cseq ?? -1, frame.payload);
         ok.broadcast = [relayUpdate(frame.payload)];
@@ -81,9 +101,9 @@ export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
       }
       return ok;
     }
-    case FRAME_AWARENESS: {
-      // Etapa 2: relay opaco; la identidad la fija el servidor en Etapa 4.
-      ok.broadcast = [data.slice()];
+    default: {
+      // Los frames de awareness (0x04) los rutea el server a awareness.ts.
+      ok.errorJson = errorPayload("UNKNOWN_MESSAGE", "frame no ruteado");
       return ok;
     }
   }

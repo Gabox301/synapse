@@ -4,7 +4,7 @@ export interface Transport {
   close(code?: number): void;
   onOpen(cb: () => void): void;
   onMessage(cb: (data: string | Uint8Array | ArrayBuffer) => void): void;
-  onClose(cb: () => void): void;
+  onClose(cb: (code: number) => void): void;
 }
 
 /** Transporte para browser/Deno usando el WebSocket global (se resuelve al llamar, no al importar). */
@@ -25,8 +25,8 @@ export function browserTransport(url: string, protocols: string[]): Transport {
     onMessage(cb: (data: string | Uint8Array | ArrayBuffer) => void): void {
       ws.onmessage = (ev) => cb(ev.data);
     },
-    onClose(cb: () => void): void {
-      ws.onclose = () => cb();
+    onClose(cb: (code: number) => void): void {
+      ws.onclose = (ev) => cb(ev.code);
     },
   };
 }

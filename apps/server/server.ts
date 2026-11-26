@@ -1,6 +1,11 @@
 import { router } from "./app/router.ts";
 import type { ConnState } from "./realtime/handler.ts";
 import { handleBinary } from "./realtime/handler.ts";
+import { handleAwarenessFrame, frameAwareness, identityFor, releaseConnection, releaseDocument } from "./realtime/awareness.ts";
+import { RateLimiter } from "./realtime/ratelimit.ts";
+import { resolveRole } from "./auth/access.ts";
+import { getUserById } from "./auth/sessions.ts";
+import { consumeTicket } from "./auth/tickets.ts";
 import { enqueueUpdate, ensureLoaded, evictIfEmpty } from "./realtime/durability.ts";
 
 const PORT = Number(Deno.env.get("PORT") ?? "44100");
@@ -9,13 +14,20 @@ const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") ?? "http://localhost:44
 const MAX_MSG_BYTES = 64 * 1024;
 const rooms = new Map<string, Set<WebSocket>>();
 
+// Rate limiting (Etapa 4 T5): por conexión y por usuario.
+// Ráfagas cortas pasan; abuso acumulado cierra con 4429.
+const connLimiter = new RateLimiter({ capacity: 100, refillPerSec: 50 });
+const userLimiter = new RateLimiter({ capacity: 200, refillPerSec: 100 });
+const RATE_CLOSE_AFTER_DROPS = 25;
+let nextConnId = 0;
+
 function isOriginAllowed(req: Request): boolean {
   const origin = req.headers.get("origin");
   if (!origin) return true; // curl / no-browser
   return ALLOWED_ORIGINS.includes(origin);
 }
 
-function handleWS(req: Request): Response {
+async function handleWS(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const m = url.pathname.match(/^\/ws\/documents\/([^/]+)$/);
   if (!m) return new Response("not found", { status: 404 });
@@ -26,9 +38,14 @@ function handleWS(req: Request): Response {
   if (!ticket) {
     return new Response("missing ticket", { status: 401 });
   }
-  // Etapa 1: ticket con forma final pero de prueba (Etapa 4 lo vuelve real).
-  // Por ahora solo se exige presencia y longitud mínima.
-  if (ticket.length < 8) return new Response("invalid ticket", { status: 401 });
+  // Etapa 4: ticket real de un solo uso, atado al documento.
+  const consumed = await consumeTicket(ticket, documentId).catch(() => null);
+  if (!consumed) return new Response("invalid ticket", { status: 401 });
+  const role = await resolveRole(consumed.userId, documentId).catch(() => null);
+  if (!role) return new Response("forbidden", { status: 403 });
+  const user = await getUserById(consumed.userId).catch(() => null);
+  if (!user) return new Response("forbidden", { status: 403 });
+  const identity = identityFor(user.id, user.email);
 
   const proto = req.headers.get("sec-websocket-protocol") ?? "";
   if (!proto.split(",").map((s) => s.trim()).includes("snp.v1")) {
@@ -62,11 +79,18 @@ function handleWS(req: Request): Response {
     if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({
       type: "document:joined",
-      payload: { documentId, role: "editor", seq },
+      payload: { documentId, role, seq },
     }));
   };
 
-  const st: ConnState = { documentId, unknownCount: 0 };
+  const connKey = `${documentId}#${++nextConnId}`;
+  const st: ConnState = {
+    documentId,
+    unknownCount: 0,
+    awarenessIds: new Set<number>(),
+    rateDrops: 0,
+    auth: { userId: consumed.userId, role, name: identity.name, color: identity.color },
+  };
 
   socket.onmessage = async (ev) => {
     if (typeof ev.data !== "string") {
@@ -105,6 +129,68 @@ function handleWS(req: Request): Response {
           type: "document:error",
           payload: { code: "INTERNAL", message: "no se pudo leer el frame" },
         }));
+        return;
+      }
+      // Etapa 4: el rol se verifica en CADA mensaje, no solo al conectar.
+      // Revocado => 4403. Cambio de rol => access-changed en caliente.
+      // Ante error de DB se conserva el rol cacheado (fail-open acotado).
+      if (st.auth) {
+        try {
+          const fresh = await resolveRole(st.auth.userId, documentId);
+          if (!fresh) {
+            if (socket.readyState === WebSocket.OPEN) socket.close(4403);
+            return;
+          }
+          if (fresh !== st.auth.role) {
+            st.auth = { ...st.auth, role: fresh };
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({
+                type: "document:access-changed",
+                payload: { role: fresh },
+              }));
+            }
+          }
+        } catch (err) {
+          console.error(`[ws] resolveRole ${documentId} falló, se conserva rol:`, err);
+        }
+      }
+      // Etapa 4 T5: rate limiting por conexión y por usuario.
+      // Ráfagas cortas pasan; abuso sostenido cierra con 4429.
+      if (st.auth) {
+        const okConn = connLimiter.take(connKey);
+        const okUser = userLimiter.take(`user:${st.auth.userId}`);
+        if (!okConn || !okUser) {
+          st.rateDrops += 1;
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+              type: "document:error",
+              payload: { code: "RATE_LIMITED", message: "demasiados mensajes" },
+            }));
+            if (st.rateDrops >= RATE_CLOSE_AFTER_DROPS) socket.close(4429);
+          }
+          return;
+        }
+      }
+      // Awareness con identidad del servidor (Etapa 4): ruteo aparte con rewrite.
+      if (bytes[0] === 0x04 && st.auth) {
+        const out = handleAwarenessFrame(documentId, socket, st.awarenessIds, bytes, {
+          userId: st.auth.userId,
+          name: st.auth.name,
+          color: st.auth.color,
+        });
+        if (out.relay) {
+          const framed = frameAwareness(out.relay);
+          const room = rooms.get(documentId);
+          if (room) {
+            for (const peer of room) {
+              if (peer !== socket && peer.readyState === WebSocket.OPEN) {
+                peer.send(framed.slice().buffer);
+              }
+            }
+          }
+        } else {
+          console.error(`[ws] awareness descartado ${documentId}: ${out.reason ?? "?"}`);
+        }
         return;
       }
       const out = handleBinary(bytes, st);
@@ -160,18 +246,32 @@ function handleWS(req: Request): Response {
   };
 
   const leave = () => {
+    connLimiter.forget(connKey);
     const room = rooms.get(documentId);
+    // La presencia de esta conexión se elimina y se difunde de inmediato.
+    const removal = releaseConnection(documentId, socket);
+    const finishEvict = (done: boolean) => {
+      if (done) releaseDocument(documentId);
+    };
     if (!room) {
-      void evictIfEmpty(documentId, undefined).catch((err) =>
+      void evictIfEmpty(documentId, undefined).then(finishEvict).catch((err) =>
         console.error(`[ws] evict ${documentId} falló:`, err)
       );
       return;
     }
     room.delete(socket);
+    if (removal && room.size > 0) {
+      const framed = frameAwareness(removal);
+      for (const peer of room) {
+        if (peer !== socket && peer.readyState === WebSocket.OPEN) {
+          peer.send(framed.slice().buffer);
+        }
+      }
+    }
     if (room.size === 0) rooms.delete(documentId);
     // Persiste pendientes antes de liberar memoria (fire-and-forget;
     // ante caída, el cliente reenvía lo no confirmado por state vector).
-    void evictIfEmpty(documentId, room).catch((err) =>
+    void evictIfEmpty(documentId, room).then(finishEvict).catch((err) =>
       console.error(`[ws] evict ${documentId} falló:`, err)
     );
   };
