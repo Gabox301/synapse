@@ -1,7 +1,9 @@
 import { router } from "./app/router.ts";
 import type { ConnState } from "./realtime/handler.ts";
 import { handleBinary } from "./realtime/handler.ts";
+import { frameAwareness, handleAwarenessFrame, identityFor, releaseConnection, releaseDocument } from "./realtime/awareness.ts";
 import { resolveRole } from "./auth/access.ts";
+import { getUserById } from "./auth/sessions.ts";
 import { consumeTicket } from "./auth/tickets.ts";
 import { enqueueUpdate, ensureLoaded, evictIfEmpty } from "./realtime/durability.ts";
 
@@ -33,6 +35,9 @@ async function handleWS(req: Request): Promise<Response> {
   if (!consumed) return new Response("invalid ticket", { status: 401 });
   const role = await resolveRole(consumed.userId, documentId).catch(() => null);
   if (!role) return new Response("forbidden", { status: 403 });
+  const user = await getUserById(consumed.userId).catch(() => null);
+  if (!user) return new Response("forbidden", { status: 403 });
+  const identity = identityFor(user.id, user.email);
 
   const proto = req.headers.get("sec-websocket-protocol") ?? "";
   if (!proto.split(",").map((s) => s.trim()).includes("snp.v1")) {
@@ -66,11 +71,16 @@ async function handleWS(req: Request): Promise<Response> {
     if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({
       type: "document:joined",
-      payload: { documentId, role: "editor", seq },
+      payload: { documentId, role, seq },
     }));
   };
 
-  const st: ConnState = { documentId, unknownCount: 0, auth: { userId: consumed.userId, role } };
+  const st: ConnState = {
+    documentId,
+    unknownCount: 0,
+    awarenessIds: new Set<number>(),
+    auth: { userId: consumed.userId, role, name: identity.name, color: identity.color },
+  };
 
   socket.onmessage = async (ev) => {
     if (typeof ev.data !== "string") {
@@ -122,7 +132,7 @@ async function handleWS(req: Request): Promise<Response> {
             return;
           }
           if (fresh !== st.auth.role) {
-            st.auth = { userId: st.auth.userId, role: fresh };
+            st.auth = { ...st.auth, role: fresh };
             if (socket.readyState === WebSocket.OPEN) {
               socket.send(JSON.stringify({
                 type: "document:access-changed",
@@ -133,6 +143,28 @@ async function handleWS(req: Request): Promise<Response> {
         } catch (err) {
           console.error(`[ws] resolveRole ${documentId} falló, se conserva rol:`, err);
         }
+      }
+      // Awareness con identidad del servidor (Etapa 4): ruteo aparte con rewrite.
+      if (bytes[0] === 0x04 && st.auth) {
+        const out = handleAwarenessFrame(documentId, socket, st.awarenessIds, bytes, {
+          userId: st.auth.userId,
+          name: st.auth.name,
+          color: st.auth.color,
+        });
+        if (out.relay) {
+          const framed = frameAwareness(out.relay);
+          const room = rooms.get(documentId);
+          if (room) {
+            for (const peer of room) {
+              if (peer !== socket && peer.readyState === WebSocket.OPEN) {
+                peer.send(framed.slice().buffer);
+              }
+            }
+          }
+        } else {
+          console.error(`[ws] awareness descartado ${documentId}: ${out.reason ?? "?"}`);
+        }
+        return;
       }
       const out = handleBinary(bytes, st);
       for (const reply of out.replies) socket.send(reply.slice().buffer);
@@ -188,17 +220,30 @@ async function handleWS(req: Request): Promise<Response> {
 
   const leave = () => {
     const room = rooms.get(documentId);
+    // La presencia de esta conexión se elimina y se difunde de inmediato.
+    const removal = releaseConnection(documentId, socket);
+    const finishEvict = (done: boolean) => {
+      if (done) releaseDocument(documentId);
+    };
     if (!room) {
-      void evictIfEmpty(documentId, undefined).catch((err) =>
+      void evictIfEmpty(documentId, undefined).then(finishEvict).catch((err) =>
         console.error(`[ws] evict ${documentId} falló:`, err)
       );
       return;
     }
     room.delete(socket);
+    if (removal && room.size > 0) {
+      const framed = frameAwareness(removal);
+      for (const peer of room) {
+        if (peer !== socket && peer.readyState === WebSocket.OPEN) {
+          peer.send(framed.slice().buffer);
+        }
+      }
+    }
     if (room.size === 0) rooms.delete(documentId);
     // Persiste pendientes antes de liberar memoria (fire-and-forget;
     // ante caída, el cliente reenvía lo no confirmado por state vector).
-    void evictIfEmpty(documentId, room).catch((err) =>
+    void evictIfEmpty(documentId, room).then(finishEvict).catch((err) =>
       console.error(`[ws] evict ${documentId} falló:`, err)
     );
   };

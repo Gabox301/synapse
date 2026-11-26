@@ -6,7 +6,7 @@ import { getOrCreateDoc, resetStore } from "./documents.ts";
 import { handleBinary } from "./handler.ts";
 
 function state(docId = "doc1") {
-  return { documentId: docId, unknownCount: 0 };
+  return { documentId: docId, unknownCount: 0, awarenessIds: new Set<number>() };
 }
 
 Deno.test("UPDATE se aplica y se difunde con cseq cero", () => {
@@ -54,7 +54,12 @@ Deno.test("UPDATE inválido responde INVALID_UPDATE sin difundir", () => {
 });
 
 function vstate(docId = "doc1", role: "owner" | "editor" | "viewer" = "viewer") {
-  return { documentId: docId, unknownCount: 0, auth: { userId: "u1", role } };
+  return {
+    documentId: docId,
+    unknownCount: 0,
+    awarenessIds: new Set<number>(),
+    auth: { userId: "u1", role, name: "u1", color: "#000" },
+  };
 }
 
 Deno.test("viewer UPDATE se descarta con READ_ONLY sin difundir", () => {
@@ -69,7 +74,7 @@ Deno.test("viewer UPDATE se descarta con READ_ONLY sin difundir", () => {
   assertEquals(getOrCreateDoc("doc1").getText("t").toString(), "");
 });
 
-Deno.test("viewer SYNC_STEP2 se rechaza; SYNC_STEP1 y AWARENESS pasan", () => {
+Deno.test("viewer SYNC_STEP2 se rechaza; SYNC_STEP1 pasa; awareness va por awareness.ts", () => {
   resetStore();
   getOrCreateDoc("doc1").getText("t").insert(0, "abc");
   const step2 = handleBinary(encodeSyncStep2(new Uint8Array([1, 2, 3])), vstate());
@@ -77,9 +82,9 @@ Deno.test("viewer SYNC_STEP2 se rechaza; SYNC_STEP1 y AWARENESS pasan", () => {
   assertEquals(step2.broadcast.length, 0);
   const step1 = handleBinary(encodeSyncStep1(Y.encodeStateVector(new Y.Doc())), vstate());
   assertEquals(step1.replies.length, 2);
-  const aw = handleBinary(new Uint8Array([0x04, 9, 9]), vstate());
-  assertEquals(aw.broadcast.length, 1);
-  assertEquals(aw.errorJson, null);
+  const routed = handleBinary(new Uint8Array([0x04, 9, 9]), vstate());
+  assertEquals(JSON.parse(routed.errorJson!).payload.code, "UNKNOWN_MESSAGE");
+  assertEquals(routed.broadcast.length, 0);
 });
 
 Deno.test("editor UPDATE funciona con auth puesta", () => {

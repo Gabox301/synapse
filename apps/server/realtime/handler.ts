@@ -1,6 +1,5 @@
 // Ruteo de frames binarios SNP v1 (puro y testeable; el socket vive en server.ts).
 import {
-  FRAME_AWARENESS,
   FRAME_SYNC_STEP1,
   FRAME_SYNC_STEP2,
   FRAME_UPDATE,
@@ -20,7 +19,9 @@ export interface ConnState {
   /** Mensajes desconocidos consecutivos (al tercero se cierra con 4400). */
   unknownCount: number;
   /** Fijado tras el handshake (Etapa 4); T3 lo exige por mensaje. */
-  auth?: { userId: string; role: Role };
+  auth?: { userId: string; role: Role; name: string; color: string };
+  /** clientIDs de awareness que pertenecen a esta conexión. */
+  awarenessIds: Set<number>;
 }
 
 export interface RouteOutcome {
@@ -98,9 +99,9 @@ export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
       }
       return ok;
     }
-    case FRAME_AWARENESS: {
-      // Etapa 2: relay opaco; la identidad la fija el servidor en Etapa 4.
-      ok.broadcast = [data.slice()];
+    default: {
+      // Los frames de awareness (0x04) los rutea el server a awareness.ts.
+      ok.errorJson = errorPayload("UNKNOWN_MESSAGE", "frame no ruteado");
       return ok;
     }
   }
