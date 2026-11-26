@@ -22,6 +22,8 @@ export interface ConnState {
   auth?: { userId: string; role: Role; name: string; color: string };
   /** clientIDs de awareness que pertenecen a esta conexión. */
   awarenessIds: Set<number>;
+  /** Rechazos de rate-limit acumulados (cierra con 4429 al llegar al tope). */
+  rateDrops: number;
 }
 
 export interface RouteOutcome {

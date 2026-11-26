@@ -1,7 +1,8 @@
 import { router } from "./app/router.ts";
 import type { ConnState } from "./realtime/handler.ts";
 import { handleBinary } from "./realtime/handler.ts";
-import { frameAwareness, handleAwarenessFrame, identityFor, releaseConnection, releaseDocument } from "./realtime/awareness.ts";
+import { handleAwarenessFrame, frameAwareness, identityFor, releaseConnection, releaseDocument } from "./realtime/awareness.ts";
+import { RateLimiter } from "./realtime/ratelimit.ts";
 import { resolveRole } from "./auth/access.ts";
 import { getUserById } from "./auth/sessions.ts";
 import { consumeTicket } from "./auth/tickets.ts";
@@ -12,6 +13,13 @@ const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") ?? "http://localhost:44
 
 const MAX_MSG_BYTES = 64 * 1024;
 const rooms = new Map<string, Set<WebSocket>>();
+
+// Rate limiting (Etapa 4 T5): por conexión y por usuario.
+// Ráfagas cortas pasan; abuso acumulado cierra con 4429.
+const connLimiter = new RateLimiter({ capacity: 100, refillPerSec: 50 });
+const userLimiter = new RateLimiter({ capacity: 200, refillPerSec: 100 });
+const RATE_CLOSE_AFTER_DROPS = 25;
+let nextConnId = 0;
 
 function isOriginAllowed(req: Request): boolean {
   const origin = req.headers.get("origin");
@@ -75,10 +83,12 @@ async function handleWS(req: Request): Promise<Response> {
     }));
   };
 
+  const connKey = `${documentId}#${++nextConnId}`;
   const st: ConnState = {
     documentId,
     unknownCount: 0,
     awarenessIds: new Set<number>(),
+    rateDrops: 0,
     auth: { userId: consumed.userId, role, name: identity.name, color: identity.color },
   };
 
@@ -142,6 +152,23 @@ async function handleWS(req: Request): Promise<Response> {
           }
         } catch (err) {
           console.error(`[ws] resolveRole ${documentId} falló, se conserva rol:`, err);
+        }
+      }
+      // Etapa 4 T5: rate limiting por conexión y por usuario.
+      // Ráfagas cortas pasan; abuso sostenido cierra con 4429.
+      if (st.auth) {
+        const okConn = connLimiter.take(connKey);
+        const okUser = userLimiter.take(`user:${st.auth.userId}`);
+        if (!okConn || !okUser) {
+          st.rateDrops += 1;
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({
+              type: "document:error",
+              payload: { code: "RATE_LIMITED", message: "demasiados mensajes" },
+            }));
+            if (st.rateDrops >= RATE_CLOSE_AFTER_DROPS) socket.close(4429);
+          }
+          return;
         }
       }
       // Awareness con identidad del servidor (Etapa 4): ruteo aparte con rewrite.
@@ -219,6 +246,7 @@ async function handleWS(req: Request): Promise<Response> {
   };
 
   const leave = () => {
+    connLimiter.forget(connKey);
     const room = rooms.get(documentId);
     // La presencia de esta conexión se elimina y se difunde de inmediato.
     const removal = releaseConnection(documentId, socket);

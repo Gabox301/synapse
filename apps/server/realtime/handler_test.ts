@@ -6,7 +6,7 @@ import { getOrCreateDoc, resetStore } from "./documents.ts";
 import { handleBinary } from "./handler.ts";
 
 function state(docId = "doc1") {
-  return { documentId: docId, unknownCount: 0, awarenessIds: new Set<number>() };
+  return { documentId: docId, unknownCount: 0, awarenessIds: new Set<number>(), rateDrops: 0 };
 }
 
 Deno.test("UPDATE se aplica y se difunde con cseq cero", () => {
@@ -58,6 +58,7 @@ function vstate(docId = "doc1", role: "owner" | "editor" | "viewer" = "viewer") 
     documentId: docId,
     unknownCount: 0,
     awarenessIds: new Set<number>(),
+    rateDrops: 0,
     auth: { userId: "u1", role, name: "u1", color: "#000" },
   };
 }

@@ -2,6 +2,7 @@ import { render } from "remix/middleware/render";
 import { createController } from "remix/router";
 
 import { hashPassword, verifyPassword } from "../../auth/password.ts";
+import { RateLimiter } from "../../realtime/ratelimit.ts";
 import {
   SESSION_COOKIE,
   createSession,
@@ -34,6 +35,15 @@ function sessionCookie(token: string, url: URL, maxAge = 604800): string {
   const secure = url.protocol === "https:" ? "; Secure" : "";
   return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 }
+
+function clientIp(req: Request): string {
+  const fwd = req.headers.get("x-forwarded-for");
+  if (fwd) return fwd.split(",")[0].trim() || "unknown";
+  return "direct";
+}
+
+// Login/registro: 20 intentos por minuto por IP (anti fuerza bruta básico).
+const authLimiter = new RateLimiter({ capacity: 20, refillPerSec: 20 / 60 });
 
 async function readCredentials(
   req: Request,
@@ -75,6 +85,9 @@ export default createController(routes, {
       return Response.json({ ok: true, service: "synapse", ws: "/ws/documents/:id" });
     },
     async register(context) {
+      if (!authLimiter.take(`reg:${clientIp(context.request)}`)) {
+        return Response.json({ error: "RATE_LIMITED" }, { status: 429 });
+      }
       const creds = await readCredentials(context.request);
       if (creds instanceof Response) return creds;
       if (creds.password.length < 8) {
@@ -95,6 +108,9 @@ export default createController(routes, {
       });
     },
     async login(context) {
+      if (!authLimiter.take(`login:${clientIp(context.request)}`)) {
+        return Response.json({ error: "RATE_LIMITED" }, { status: 429 });
+      }
       const creds = await readCredentials(context.request);
       if (creds instanceof Response) return creds;
       const user = await findUserByEmail(creds.email);
