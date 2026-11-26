@@ -13,10 +13,14 @@ import {
 } from "./documents.ts";
 import { relayUpdate } from "./documents.ts";
 
+import type { Role } from "../auth/access.ts";
+
 export interface ConnState {
   documentId: string;
   /** Mensajes desconocidos consecutivos (al tercero se cierra con 4400). */
   unknownCount: number;
+  /** Fijado tras el handshake (Etapa 4); T3 lo exige por mensaje. */
+  auth?: { userId: string; role: Role };
 }
 
 export interface RouteOutcome {

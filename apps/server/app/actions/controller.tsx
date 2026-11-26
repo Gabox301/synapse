@@ -11,6 +11,8 @@ import {
   revokeSession,
   validateSession,
 } from "../../auth/sessions.ts";
+import { issueTicket } from "../../auth/tickets.ts";
+import { createDocument, resolveRole } from "../../auth/access.ts";
 import { assets } from "../assets.ts";
 import { DocumentShell } from "../ui/document.tsx";
 import { routes } from "../routes.ts";
@@ -121,16 +123,53 @@ export default createController(routes, {
       if (!user) return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
       return Response.json(user);
     },
+    async createDocument(context) {
+      const token = getSessionToken(context.request);
+      const session = token ? await validateSession(token) : null;
+      if (!session) return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+      let title = "Untitled";
+      try {
+        const ct = context.request.headers.get("content-type") ?? "";
+        if (ct.includes("application/json")) {
+          const body = await context.request.json() as { title?: unknown };
+          if (typeof body.title === "string" && body.title.trim()) title = body.title.trim();
+        } else {
+          const form = await context.request.formData();
+          const t = form.get("title");
+          if (typeof t === "string" && t.trim()) title = t.trim();
+        }
+      } catch {
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      const id = await createDocument({ title, createdBy: session.userId });
+      return Response.json({ id, title }, { status: 201 });
+    },
+    async wsTicket(context) {
+      const token = getSessionToken(context.request);
+      const session = token ? await validateSession(token) : null;
+      if (!session) return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+      const documentId: string = context.params.id;
+      const role = await resolveRole(session.userId, documentId).catch(() => null);
+      if (!role) return Response.json({ error: "NOT_FOUND" }, { status: 404 });
+      const { ticket } = await issueTicket(session.userId, documentId);
+      return Response.json({ ticket });
+    },
     async editDocument(context) {
-      // Ticket de prueba con forma final (Etapa 1/4): presencia + longitud mínima.
-      const ticket = crypto.randomUUID().replaceAll("-", "");
+      // Etapa 4: requiere sesión y acceso; el ticket es real y de un solo uso.
+      const token = getSessionToken(context.request);
+      const session = token ? await validateSession(token) : null;
+      if (!session) return new Response("login required", { status: 401 });
+      const documentId: string = context.params.id;
+      const authRole = await resolveRole(session.userId, documentId).catch(() => null);
+      if (!authRole) return new Response("not found", { status: 404 });
+      const issued = await issueTicket(session.userId, documentId);
       const url = new URL(context.request.url);
       const baseUrl = `${url.protocol === "https:" ? "wss" : "ws"}://${url.host}`;
       const entry = await assets.getScriptEntry("apps/server/app/actions/public/entry.ts");
       return context.render(
         <DocumentShell
-          docId={context.params.id}
-          ticket={ticket}
+          docId={documentId}
+          ticket={issued.ticket}
           baseUrl={baseUrl}
           entry={entry}
         />,

@@ -1,6 +1,8 @@
 import { router } from "./app/router.ts";
 import type { ConnState } from "./realtime/handler.ts";
 import { handleBinary } from "./realtime/handler.ts";
+import { resolveRole } from "./auth/access.ts";
+import { consumeTicket } from "./auth/tickets.ts";
 import { enqueueUpdate, ensureLoaded, evictIfEmpty } from "./realtime/durability.ts";
 
 const PORT = Number(Deno.env.get("PORT") ?? "44100");
@@ -15,7 +17,7 @@ function isOriginAllowed(req: Request): boolean {
   return ALLOWED_ORIGINS.includes(origin);
 }
 
-function handleWS(req: Request): Response {
+async function handleWS(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const m = url.pathname.match(/^\/ws\/documents\/([^/]+)$/);
   if (!m) return new Response("not found", { status: 404 });
@@ -26,9 +28,11 @@ function handleWS(req: Request): Response {
   if (!ticket) {
     return new Response("missing ticket", { status: 401 });
   }
-  // Etapa 1: ticket con forma final pero de prueba (Etapa 4 lo vuelve real).
-  // Por ahora solo se exige presencia y longitud mínima.
-  if (ticket.length < 8) return new Response("invalid ticket", { status: 401 });
+  // Etapa 4: ticket real de un solo uso, atado al documento.
+  const consumed = await consumeTicket(ticket, documentId).catch(() => null);
+  if (!consumed) return new Response("invalid ticket", { status: 401 });
+  const role = await resolveRole(consumed.userId, documentId).catch(() => null);
+  if (!role) return new Response("forbidden", { status: 403 });
 
   const proto = req.headers.get("sec-websocket-protocol") ?? "";
   if (!proto.split(",").map((s) => s.trim()).includes("snp.v1")) {
@@ -66,7 +70,7 @@ function handleWS(req: Request): Response {
     }));
   };
 
-  const st: ConnState = { documentId, unknownCount: 0 };
+  const st: ConnState = { documentId, unknownCount: 0, auth: { userId: consumed.userId, role } };
 
   socket.onmessage = async (ev) => {
     if (typeof ev.data !== "string") {
