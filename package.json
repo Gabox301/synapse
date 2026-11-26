@@ -1,0 +1,5 @@
+{
+  "name": "synapse",
+  "private": true,
+  "packageManager": "pnpm@12.23.0"
+}
