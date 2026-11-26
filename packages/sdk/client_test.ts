@@ -124,6 +124,35 @@ Deno.test("UPDATE remoto (cseq 0) se aplica y se emite sin reenviar", () => {
   assertEquals(after.length, 0);
 });
 
+Deno.test("reconnect ignora el close del transporte viejo", async () => {
+  const transports: MockTransport[] = [];
+  const events: string[] = [];
+  const client = new SynapseClient({
+    documentId: "doc1",
+    ticket: "prueba1234",
+    baseUrl: "ws://localhost:44100",
+    createTransport: () => {
+      const t = new MockTransport();
+      transports.push(t);
+      return t;
+    },
+    awarenessThrottleMs: 0,
+    onJoined: (info) => events.push("joined:" + info.role),
+  });
+  const p1 = client.connect();
+  transports[0].emitOpen();
+  transports[0].emitMessage(JSON.stringify({ type: "document:joined", payload: { documentId: "doc1", role: "editor", seq: 0 } }));
+  await p1;
+  const p2 = client.reconnect();
+  // El close del transporte viejo llega DESPUÉS de re-conectar: no debe matar el join nuevo.
+  transports[0].close(); // close del transporte viejo tras re-conectar
+  transports[1].emitOpen();
+  transports[1].emitMessage(JSON.stringify({ type: "document:joined", payload: { documentId: "doc1", role: "editor", seq: 1 } }));
+  const joined = await p2;
+  assertEquals(joined.seq, 1);
+  assertEquals(events, ["joined:editor", "joined:editor"]);
+});
+
 Deno.test("frame desconocido emite error sin romper la conexión", () => {
   const { t, events, client } = setup();
   client.connect();

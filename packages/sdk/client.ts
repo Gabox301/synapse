@@ -87,18 +87,25 @@ export class SynapseClient {
   connect(): Promise<JoinedInfo> {
     const url = `${this.opts.baseUrl}/ws/documents/${this.opts.documentId}?ticket=${encodeURIComponent(this.opts.ticket)}`;
     this.transport = this.opts.createTransport(url, [PROTOCOL_VERSION]);
+    const current = this.transport;
+    const isCurrent = () => this.transport === current;
     const promise = new Promise<JoinedInfo>((resolve, reject) => {
       this.joinedResolve = resolve;
       this.joinedReject = reject;
     });
     this.transport.onOpen(() => {
+      if (!isCurrent()) return;
       this.isOpen = true;
       // El handshake va primero; luego se drena lo encolado en orden.
-      this.transport?.send(encodeSyncStep1(Y.encodeStateVector(this.doc)));
+      current.send(encodeSyncStep1(Y.encodeStateVector(this.doc)));
       this.flushOutbox();
     });
-    this.transport.onMessage((data) => this.handleMessage(data));
+    this.transport.onMessage((data) => {
+      if (!isCurrent()) return;
+      this.handleMessage(data);
+    });
     this.transport.onClose(() => {
+      if (!isCurrent()) return;
       this.isOpen = false;
       this.opts.onClose?.();
       this.joinedReject?.(new Error("CONNECTION_CLOSED"));
@@ -135,8 +142,13 @@ export class SynapseClient {
 
   close(code = 1000): void {
     this.closed = true;
+    this.isOpen = false;
     this.transport?.close(code);
     this.transport = null;
+    // Un close intencional cancela un join pendiente.
+    this.joinedReject?.(new Error("CONNECTION_CLOSED"));
+    this.joinedResolve = null;
+    this.joinedReject = null;
   }
 
   private sendRaw(data: string | Uint8Array): void {
