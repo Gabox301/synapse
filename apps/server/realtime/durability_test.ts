@@ -233,6 +233,29 @@ Deno.test({
       }
     });
 
+    await t.step("crash pierde lo no confirmado; resync del cliente lo recupera", async () => {
+      resetStore();
+      resetDurability();
+      const id = freshId("t5-crash");
+      const doc = new Y.Doc();
+      doc.getText("t").insert(0, "x");
+      const clientCopy = Y.encodeStateAsUpdate(doc);
+      const mock = mockConn();
+      enqueueUpdate(id, mock as unknown as WebSocket, 1, clientCopy);
+      // Crash: se pierde la memoria SIN hacer flush (nada confirmado).
+      resetStore();
+      resetDurability();
+      const reloaded = await loadDocument(id);
+      if (reloaded && (reloaded.updates.length > 0 || reloaded.snapshot)) {
+        throw new Error("lo no confirmado debió perderse");
+      }
+      // Resync: el cliente reenvía su copia y converge.
+      enqueueUpdate(id, mock as unknown as WebSocket, 1, clientCopy);
+      await flushDocument(id);
+      const { doc: final } = await ensureLoaded(id);
+      if (final.getText("t").toString() !== "x") throw new Error("resync no convergió");
+    });
+
     await t.step("enforceRetention recorta con snapshot y ventana", async () => {
       resetStore();
       resetDurability();
