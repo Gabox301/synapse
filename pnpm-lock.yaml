@@ -194,6 +194,8 @@ importers:
         specifier: ^13.6.27
         version: 13.6.33
 
+  packages/protocol: {}
+
 packages:
 
   '@emnapi/core@1.11.2':
