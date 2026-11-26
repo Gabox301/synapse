@@ -4,12 +4,18 @@
     "jsr:@std/assert@*": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:@tiptap/core@^2.27.3": "2.27.3_@tiptap+pm@2.27.3",
+    "npm:@tiptap/pm@^2.27.3": "2.27.3",
     "npm:@tiptap/starter-kit@^2.27.3": "2.27.3",
     "npm:@types/node@^26.6.10": "26.6.10",
-    "npm:remix@*": "3.3.0_@emnapi+core@1.11.2_@emnapi+runtime@1.11.2",
-    "npm:remix@3": "3.3.0_@emnapi+core@1.11.2_@emnapi+runtime@1.11.2",
+    "npm:pg@^8.23.1": "8.23.1",
+    "npm:prosemirror-model@^1.25.13": "1.25.13",
+    "npm:prosemirror-state@^1.4.4": "1.4.4",
+    "npm:prosemirror-view@^1.44.0": "1.44.0",
+    "npm:remix@*": "3.3.0_pg@8.23.1",
+    "npm:remix@3": "3.3.0_pg@8.23.1",
     "npm:y-prosemirror@^1.3.7": "1.3.7_prosemirror-model@1.25.13_prosemirror-state@1.4.4_prosemirror-view@1.44.0_y-protocols@1.0.7_yjs@13.6.33",
     "npm:y-protocols@*": "1.0.7_yjs@13.6.33",
+    "npm:y-protocols@1.0.7": "1.0.7_yjs@13.6.33",
     "npm:y-protocols@^1.0.6": "1.0.7_yjs@13.6.33",
     "npm:yjs@*": "13.6.33",
     "npm:yjs@^13.6.27": "13.6.33"
@@ -653,7 +659,7 @@
         "@remix-run/session"
       ]
     },
-    "@remix-run/cli@1.0.3_@emnapi+core@1.11.2_@emnapi+runtime@1.11.2": {
+    "@remix-run/cli@1.0.3_pg@8.23.1": {
       "integrity": "sha512-AYS07ohj/NMH+6wnJo0byHlCIxC1ljj+bVNFNv/nEqIUpsAk8lL77Ru1dsr1cVGxthtaBMtTW4ArnJadUGyyLQ==",
       "dependencies": [
         "@remix-run/assets",
@@ -734,10 +740,14 @@
         "@remix-run/data-table"
       ]
     },
-    "@remix-run/data-table-postgres@1.0.1": {
+    "@remix-run/data-table-postgres@1.0.1_pg@8.23.1": {
       "integrity": "sha512-w30F+UH0xjhnPJlCeordjJRDammXxqRX6nnBWy00S8ESDg8YdFr1z/UimYJ3L3sbs+LiFFZ2yuqSkbIQTKrvog==",
       "dependencies": [
-        "@remix-run/data-table"
+        "@remix-run/data-table",
+        "pg"
+      ],
+      "optionalPeers": [
+        "pg"
       ]
     },
     "@remix-run/data-table-sqlite@1.1.0": {
@@ -1454,8 +1464,70 @@
         "@oxc-transform/binding-win32-x64-msvc"
       ]
     },
+    "pg-cloudflare@1.4.1": {
+      "integrity": "sha512-6PQbsFWZcp9EmJEwy5cGQ2La+AMWpP46lgbb8X+U/XsHIUweYDNCpeuKck5RxL2MdVFi7krbbEi5nX4Zh7JhrQ=="
+    },
+    "pg-connection-string@2.14.1": {
+      "integrity": "sha512-qR3kGNPBLpCNtz0evbKA0Y/MRFXwSSdT+pTJvYp/bXTcReZbvX1kzF0IyTc1QnxqF7AZbOeBhNL8R5mYQZV/MA=="
+    },
+    "pg-int8@1.0.1": {
+      "integrity": "sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw=="
+    },
+    "pg-pool@3.14.0_pg@8.23.1": {
+      "integrity": "sha512-gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw==",
+      "dependencies": [
+        "pg"
+      ]
+    },
+    "pg-protocol@1.16.1": {
+      "integrity": "sha512-p9VOFMiHB/ZbJATetbg+99PxssTVSQRnyuPSQ67mN1+1KBOjZaZ83ZQzltnxPhJwSsC3nwVjJ10DVJlerbFzLg=="
+    },
+    "pg-types@2.2.0": {
+      "integrity": "sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==",
+      "dependencies": [
+        "pg-int8",
+        "postgres-array",
+        "postgres-bytea",
+        "postgres-date",
+        "postgres-interval"
+      ]
+    },
+    "pg@8.23.1": {
+      "integrity": "sha512-aL96AHANtWjPLDOLqnhx+ngp9+UK7ETEU8VJrDCGvsSSi/mGLcWYsS6Herg7lmaBJe4uwrfqsa7gTEFaSizDoQ==",
+      "dependencies": [
+        "pg-connection-string",
+        "pg-pool",
+        "pg-protocol",
+        "pg-types",
+        "pgpass"
+      ],
+      "optionalDependencies": [
+        "pg-cloudflare"
+      ]
+    },
+    "pgpass@1.0.5": {
+      "integrity": "sha512-FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug==",
+      "dependencies": [
+        "split2"
+      ]
+    },
     "picomatch@4.0.7": {
       "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA=="
+    },
+    "postgres-array@2.0.0": {
+      "integrity": "sha512-VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA=="
+    },
+    "postgres-bytea@1.0.1": {
+      "integrity": "sha512-5+5HqXnsZPE65IJZSMkZtURARZelel2oXUEO8rH83VS/hxH5vv1uHquPg5wZs8yMAfdv971IU+kcPUczi7NVBQ=="
+    },
+    "postgres-date@1.0.7": {
+      "integrity": "sha512-suDmjLVQg78nMK2UZ454hAG+OAW+HQPZ6n++TNDUX+L0+uUlLywnoxJKDou51Zm+zTCjrCl0Nq6J9C5hP9vK/Q=="
+    },
+    "postgres-interval@1.2.0": {
+      "integrity": "sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==",
+      "dependencies": [
+        "xtend"
+      ]
     },
     "prosemirror-changeset@2.4.6": {
       "integrity": "sha512-P0cY3DSLm4M2boUOCmHDyaID5o6HgWmb21Bvs9p8lLqfJjKBBEHG5Ma5qW5SCmwOYamtWOLf2k+yvt6077zlTg==",
@@ -1601,7 +1673,7 @@
     "readdirp@5.1.1": {
       "integrity": "sha512-Kko+Y5XQ6fM+Ce3dq3m9YGxnacYZYl9cA1wZjaF3Vbry2L3i1qVg8+CAgNPsXRArPMUMCaOR7oa9Nqntc43JKA=="
     },
-    "remix@3.3.0_@emnapi+core@1.11.2_@emnapi+runtime@1.11.2": {
+    "remix@3.3.0_pg@8.23.1": {
       "integrity": "sha512-k5HSwHSp5c62zgSTGqvirluoOSZb/gW3Kwb22n11pK6P8b8IbzrU2dqEhzMkFg81SxPThUhTP9MwOc20N1tZVQ==",
       "dependencies": [
         "@remix-run/assert",
@@ -1652,7 +1724,11 @@
         "@remix-run/static-middleware",
         "@remix-run/tar-parser",
         "@remix-run/terminal",
-        "@remix-run/test"
+        "@remix-run/test",
+        "pg"
+      ],
+      "optionalPeers": [
+        "pg"
       ],
       "bin": true
     },
@@ -1668,6 +1744,9 @@
     },
     "source-map-js@1.2.4": {
       "integrity": "sha512-J7ZjMvHd9O1fcT/5V09QWaaSl2BbWx3F6O08spde82Namf9UB0GxRVIPiNbVsdKkoizHiSpTodo3vp2bAy91MA=="
+    },
+    "split2@4.2.0": {
+      "integrity": "sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg=="
     },
     "supports-color@7.2.0": {
       "integrity": "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==",
@@ -1694,6 +1773,9 @@
     },
     "w3c-keyname@2.2.8": {
       "integrity": "sha512-dpojBhNsCNN7T82Tm7k26A6G9ML3NkhDsnw9n/eoxSRlVBB4CEtIQ/KTCLI2Fwf3ataSXRhYFkQi3SlnFwPvPQ=="
+    },
+    "xtend@4.0.2": {
+      "integrity": "sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ=="
     },
     "y-prosemirror@1.3.7_prosemirror-model@1.25.13_prosemirror-state@1.4.4_prosemirror-view@1.44.0_y-protocols@1.0.7_yjs@13.6.33": {
       "integrity": "sha512-NpM99WSdD4Fx4if5xOMDpPtU3oAmTSjlzh5U4353ABbRHl1HtAFUx6HlebLZfyFxXN9jzKMDkVbcRjqOZVkYQg==",
@@ -1733,6 +1815,7 @@
             "npm:@tiptap/pm@^2.27.3",
             "npm:@tiptap/starter-kit@^2.27.3",
             "npm:@types/node@^26.6.10",
+            "npm:pg@^8.23.1",
             "npm:prosemirror-model@^1.25.13",
             "npm:prosemirror-state@^1.4.4",
             "npm:prosemirror-view@^1.44.0",

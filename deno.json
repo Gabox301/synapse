@@ -2,6 +2,7 @@
   "workspace": ["apps/server", "packages/protocol", "packages/sdk"],
   "tasks": {
     "dev": "deno run --allow-net --allow-read --allow-env --allow-ffi apps/server/server.ts",
+    "migrate": "deno run --allow-net --allow-read --allow-env apps/server/db/migrate.ts",
     "test": "deno test --allow-net --allow-read --allow-env tests/"
   }
 }
