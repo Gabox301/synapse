@@ -57,6 +57,7 @@ function setup() {
     awarenessThrottleMs: 0,
     onJoined: (info) => events.push("joined:" + info.role + ":" + info.seq),
     onRemoteUpdate: () => events.push("remote-update"),
+    onAck: (info) => events.push(`ack:${info.upTo}:${info.seq}`),
     onError: (code) => events.push("error:" + code),
   });
   return { t, events, client };
@@ -151,6 +152,21 @@ Deno.test("reconnect ignora el close del transporte viejo", async () => {
   const joined = await p2;
   assertEquals(joined.seq, 1);
   assertEquals(events, ["joined:editor", "joined:editor"]);
+});
+
+Deno.test("document:ack confirma pendientes y notifica onAck", () => {
+  const { t, events, client } = setup();
+  client.connect();
+  t.emitOpen();
+  t.emitMessage(JSON.stringify({ type: "document:joined", payload: { documentId: "doc1", role: "editor", seq: 0 } }));
+  client.doc.getText("t").insert(0, "a");
+  client.doc.getText("t").insert(1, "b");
+  assertEquals(client.pendingCount, 2);
+  t.emitMessage(JSON.stringify({ type: "document:ack", payload: { upTo: 1, seq: 10 } }));
+  assertEquals(client.pendingCount, 1);
+  t.emitMessage(JSON.stringify({ type: "document:ack", payload: { upTo: 2, seq: 11 } }));
+  assertEquals(client.pendingCount, 0);
+  assertEquals(events.slice(-2), ["ack:1:10", "ack:2:11"]);
 });
 
 Deno.test("frame desconocido emite error sin romper la conexión", () => {

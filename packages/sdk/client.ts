@@ -36,6 +36,7 @@ export interface SynapseClientOptions {
   awarenessThrottleMs?: number;
   onJoined?: (info: JoinedInfo) => void;
   onRemoteUpdate?: (update: Uint8Array) => void;
+  onAck?: (info: { upTo: number; seq: number }) => void;
   onAwareness?: () => void;
   onAccessChanged?: (role: string) => void;
   onError?: (code: string, message: string) => void;
@@ -45,8 +46,8 @@ export interface SynapseClientOptions {
 export class SynapseClient {
   readonly doc = new Y.Doc();
   readonly awareness: Awareness;
-  private readonly opts: Required<Omit<SynapseClientOptions, "onJoined" | "onRemoteUpdate" | "onAwareness" | "onAccessChanged" | "onError" | "onClose">> &
-    Pick<SynapseClientOptions, "onJoined" | "onRemoteUpdate" | "onAwareness" | "onAccessChanged" | "onError" | "onClose">;
+  private readonly opts: Required<Omit<SynapseClientOptions, "onJoined" | "onRemoteUpdate" | "onAck" | "onAwareness" | "onAccessChanged" | "onError" | "onClose">> &
+    Pick<SynapseClientOptions, "onJoined" | "onRemoteUpdate" | "onAck" | "onAwareness" | "onAccessChanged" | "onError" | "onClose">;
   private transport: Transport | null = null;
   private isOpen = false;
   private readonly outbox: Array<string | Uint8Array> = [];
@@ -242,6 +243,14 @@ export class SynapseClient {
         this.joinedResolve?.(info);
         this.joinedResolve = null;
         this.joinedReject = null;
+        break;
+      }
+      case "document:ack": {
+        const { upTo, seq } = msg.payload;
+        for (const cseq of [...this.pending.keys()]) {
+          if (cseq <= upTo) this.pending.delete(cseq);
+        }
+        this.opts.onAck?.({ upTo, seq });
         break;
       }
       case "document:error":

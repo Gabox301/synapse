@@ -8,6 +8,7 @@
     "@tiptap/core": "^2.27.3",
     "@tiptap/pm": "^2.27.3",
     "@tiptap/starter-kit": "^2.27.3",
+    "pg": "^8.23.1",
     "prosemirror-model": "^1.25.13",
     "prosemirror-state": "^1.4.4",
     "prosemirror-view": "^1.44.0",

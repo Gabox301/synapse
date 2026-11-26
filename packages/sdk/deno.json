@@ -1,9 +1,5 @@
 {
   "name": "@synapse/sdk",
   "version": "0.1.0",
-  "exports": "./mod.ts",
-  "imports": {
-    "yjs": "npm:yjs",
-    "y-protocols/": "npm:y-protocols/"
-  }
+  "exports": "./mod.ts"
 }

@@ -24,6 +24,8 @@ export interface RouteOutcome {
   broadcast: Uint8Array[];
   errorJson: string | null;
   closeCode: number | null;
+  /** UPDATE aplicado a memoria (para persistencia); null en el resto de casos. */
+  appliedUpdate: { cseq: number; payload: Uint8Array } | null;
 }
 
 const MAX_UNKNOWN = 3;
@@ -33,7 +35,7 @@ function errorPayload(code: string, message: string): string {
 }
 
 export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
-  const ok: RouteOutcome = { replies: [], broadcast: [], errorJson: null, closeCode: null };
+  const ok: RouteOutcome = { replies: [], broadcast: [], errorJson: null, closeCode: null, appliedUpdate: null };
   let frame;
   try {
     frame = decodeFrame(data);
@@ -72,6 +74,7 @@ export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
       try {
         applyClientUpdate(st.documentId, frame.cseq ?? -1, frame.payload);
         ok.broadcast = [relayUpdate(frame.payload)];
+        ok.appliedUpdate = { cseq: frame.cseq ?? -1, payload: frame.payload };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         ok.errorJson = errorPayload("INVALID_UPDATE", msg);

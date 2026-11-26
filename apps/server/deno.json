@@ -6,11 +6,10 @@
     "lib": ["esnext", "dom", "dom.iterable", "deno.window", "deno.ns"]
   },
   "tasks": {
-    "dev": "deno run --allow-net --allow-read --allow-env --allow-ffi server.ts",
+    "dev": "deno run --no-check --allow-net --allow-read --allow-env --allow-ffi server.ts",
     "test": "deno test --allow-net --allow-read --allow-env ./realtime/ ./tests/"
   },
   "imports": {
-    "remix/": "npm:remix/",
-    "yjs": "npm:yjs"
+    "remix/": "npm:remix/"
   }
 }
