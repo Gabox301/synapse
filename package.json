@@ -1,5 +1,12 @@
 {
   "name": "synapse",
   "private": true,
-  "packageManager": "pnpm@12.23.0"
+  "packageManager": "pnpm@12.23.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "pnpm": {
+    "supportedArchitectures": {
+      "os": ["win32", "linux"],
+      "cpu": ["x64"]
+    }
+  }
 }

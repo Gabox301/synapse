@@ -1,4 +1,7 @@
 import { router } from "./app/router.ts";
+import type { ConnState } from "./realtime/handler.ts";
+import { handleBinary } from "./realtime/handler.ts";
+import { evictDoc } from "./realtime/documents.ts";
 
 const PORT = Number(Deno.env.get("PORT") ?? "44100");
 const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") ?? "http://localhost:44100").split(",");
@@ -47,8 +50,49 @@ function handleWS(req: Request): Response {
     }));
   };
 
-  socket.onmessage = (ev) => {
-    const text = typeof ev.data === "string" ? ev.data : "";
+  const st: ConnState = { documentId, unknownCount: 0 };
+
+  socket.onmessage = async (ev) => {
+    if (typeof ev.data !== "string") {
+      // Etapa 2: frames binarios SNP v1 (SYNC_STEP1/2, UPDATE, AWARENESS).
+      let bytes: Uint8Array | null = null;
+      try {
+        if (ev.data instanceof Blob) bytes = new Uint8Array(await ev.data.arrayBuffer());
+        else if (ev.data instanceof ArrayBuffer) bytes = new Uint8Array(ev.data);
+        else if (ArrayBuffer.isView(ev.data)) {
+          bytes = new Uint8Array(
+            ev.data.buffer as ArrayBuffer,
+            ev.data.byteOffset,
+            ev.data.byteLength,
+          );
+        }
+      } catch {
+        bytes = null;
+      }
+      if (!bytes) {
+        socket.send(JSON.stringify({
+          type: "document:error",
+          payload: { code: "INTERNAL", message: "no se pudo leer el frame" },
+        }));
+        return;
+      }
+      const out = handleBinary(bytes, st);
+      for (const reply of out.replies) socket.send(reply.slice().buffer);
+      if (out.errorJson) socket.send(out.errorJson);
+      if (out.broadcast.length > 0) {
+        const room = rooms.get(documentId);
+        if (room) {
+          for (const peer of room) {
+            if (peer !== socket && peer.readyState === WebSocket.OPEN) {
+              for (const frame of out.broadcast) peer.send(frame.slice().buffer);
+            }
+          }
+        }
+      }
+      if (out.closeCode) socket.close(out.closeCode);
+      return;
+    }
+    const text = ev.data;
     if (text.length > MAX_MSG_BYTES) {
       socket.send(JSON.stringify({
         type: "document:error",
@@ -71,7 +115,7 @@ function handleWS(req: Request): Response {
       socket.send(JSON.stringify({ type: "connection:pong" }));
       return;
     }
-    // Etapa 1: broadcast de texto a la room (los frames binarios SNP llegan en Etapa 2).
+    // Broadcast de texto a la room (control JSON; los binarios se rutean arriba).
     const room = rooms.get(documentId);
     if (!room) return;
     for (const peer of room) {
@@ -81,7 +125,15 @@ function handleWS(req: Request): Response {
     }
   };
 
-  const leave = () => rooms.get(documentId)?.delete(socket);
+  const leave = () => {
+    const room = rooms.get(documentId);
+    if (!room) return;
+    room.delete(socket);
+    if (room.size === 0) {
+      rooms.delete(documentId);
+      evictDoc(documentId);
+    }
+  };
   socket.onclose = leave;
   socket.onerror = leave;
 
