@@ -1,7 +1,12 @@
 {
   "version": "0.1.0",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "remix/component",
+    "lib": ["esnext", "dom", "dom.iterable", "deno.window", "deno.ns"]
+  },
   "tasks": {
-    "dev": "deno run --allow-net --allow-read --allow-env server.ts",
+    "dev": "deno run --allow-net --allow-read --allow-env --allow-ffi server.ts",
     "test": "deno test --allow-net --allow-read --allow-env ./realtime/ ./tests/"
   },
   "imports": {
