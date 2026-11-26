@@ -1,0 +1,14 @@
+{
+  "name": "@synapse/sdk",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./mod.ts"
+  },
+  "dependencies": {
+    "@synapse/protocol": "workspace:*",
+    "yjs": "^13.6.27",
+    "y-protocols": "^1.0.6"
+  }
+}

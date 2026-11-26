@@ -5,6 +5,8 @@
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:remix@*": "3.3.0_@emnapi+core@1.11.2_@emnapi+runtime@1.11.2",
     "npm:remix@3": "3.3.0_@emnapi+core@1.11.2_@emnapi+runtime@1.11.2",
+    "npm:y-protocols@*": "1.0.7_yjs@13.6.33",
+    "npm:y-protocols@^1.0.6": "1.0.7_yjs@13.6.33",
     "npm:yjs@*": "13.6.33",
     "npm:yjs@^13.6.27": "13.6.33"
   },
@@ -1317,6 +1319,13 @@
         "convert-source-map"
       ]
     },
+    "y-protocols@1.0.7_yjs@13.6.33": {
+      "integrity": "sha512-YSVsLoXxO67J6eE/nV4AtFtT3QEotZf5sK5BHxFBXso7VDUT3Tx07IfA6hsu5Q5OmBdMkQVmFZ9QOA7fikWvnw==",
+      "dependencies": [
+        "lib0",
+        "yjs"
+      ]
+    },
     "yjs@13.6.33": {
       "integrity": "sha512-q/UYvr1gOk4XII+Cu1CW2dINjYqJJFifTzogEaIARznrvX7uOlHsdTEXcnOBMuIsrCGEEKdNxi74kyMLZlKVfw==",
       "dependencies": [
@@ -1334,6 +1343,18 @@
         "packageJson": {
           "dependencies": [
             "npm:remix@3",
+            "npm:yjs@^13.6.27"
+          ]
+        }
+      },
+      "packages/sdk": {
+        "dependencies": [
+          "npm:y-protocols@*",
+          "npm:yjs@*"
+        ],
+        "packageJson": {
+          "dependencies": [
+            "npm:y-protocols@^1.0.6",
             "npm:yjs@^13.6.27"
           ]
         }
