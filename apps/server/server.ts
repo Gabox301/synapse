@@ -111,6 +111,29 @@ async function handleWS(req: Request): Promise<Response> {
         }));
         return;
       }
+      // Etapa 4: el rol se verifica en CADA mensaje, no solo al conectar.
+      // Revocado => 4403. Cambio de rol => access-changed en caliente.
+      // Ante error de DB se conserva el rol cacheado (fail-open acotado).
+      if (st.auth) {
+        try {
+          const fresh = await resolveRole(st.auth.userId, documentId);
+          if (!fresh) {
+            if (socket.readyState === WebSocket.OPEN) socket.close(4403);
+            return;
+          }
+          if (fresh !== st.auth.role) {
+            st.auth = { userId: st.auth.userId, role: fresh };
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({
+                type: "document:access-changed",
+                payload: { role: fresh },
+              }));
+            }
+          }
+        } catch (err) {
+          console.error(`[ws] resolveRole ${documentId} falló, se conserva rol:`, err);
+        }
+      }
       const out = handleBinary(bytes, st);
       for (const reply of out.replies) socket.send(reply.slice().buffer);
       if (out.errorJson) socket.send(out.errorJson);

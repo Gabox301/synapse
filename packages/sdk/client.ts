@@ -40,7 +40,7 @@ export interface SynapseClientOptions {
   onAwareness?: () => void;
   onAccessChanged?: (role: string) => void;
   onError?: (code: string, message: string) => void;
-  onClose?: () => void;
+  onClose?: (code?: number) => void;
 }
 
 export class SynapseClient {
@@ -105,10 +105,10 @@ export class SynapseClient {
       if (!isCurrent()) return;
       this.handleMessage(data);
     });
-    this.transport.onClose(() => {
+    this.transport.onClose((code) => {
       if (!isCurrent()) return;
       this.isOpen = false;
-      this.opts.onClose?.();
+      this.opts.onClose?.(code);
       this.joinedReject?.(new Error("CONNECTION_CLOSED"));
       this.joinedResolve = null;
       this.joinedReject = null;

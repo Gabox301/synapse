@@ -1,6 +1,6 @@
 import { assertEquals } from "jsr:@std/assert";
 import * as Y from "yjs";
-import { encodeSyncStep1, encodeUpdate } from "../../../packages/protocol/frames.ts";
+import { encodeSyncStep1, encodeSyncStep2, encodeUpdate } from "../../../packages/protocol/frames.ts";
 import { decodeFrame } from "../../../packages/protocol/frames.ts";
 import { getOrCreateDoc, resetStore } from "./documents.ts";
 import { handleBinary } from "./handler.ts";
@@ -51,4 +51,42 @@ Deno.test("UPDATE inválido responde INVALID_UPDATE sin difundir", () => {
   const out = handleBinary(bad, state());
   assertEquals(out.broadcast.length, 0);
   assertEquals(JSON.parse(out.errorJson!).payload.code, "INVALID_UPDATE");
+});
+
+function vstate(docId = "doc1", role: "owner" | "editor" | "viewer" = "viewer") {
+  return { documentId: docId, unknownCount: 0, auth: { userId: "u1", role } };
+}
+
+Deno.test("viewer UPDATE se descarta con READ_ONLY sin difundir", () => {
+  resetStore();
+  getOrCreateDoc("doc1");
+  const client = new Y.Doc();
+  client.getText("t").insert(0, "x");
+  const out = handleBinary(encodeUpdate(1, Y.encodeStateAsUpdate(client)), vstate());
+  assertEquals(JSON.parse(out.errorJson!).payload.code, "READ_ONLY");
+  assertEquals(out.broadcast.length, 0);
+  assertEquals(out.appliedUpdate, null);
+  assertEquals(getOrCreateDoc("doc1").getText("t").toString(), "");
+});
+
+Deno.test("viewer SYNC_STEP2 se rechaza; SYNC_STEP1 y AWARENESS pasan", () => {
+  resetStore();
+  getOrCreateDoc("doc1").getText("t").insert(0, "abc");
+  const step2 = handleBinary(encodeSyncStep2(new Uint8Array([1, 2, 3])), vstate());
+  assertEquals(JSON.parse(step2.errorJson!).payload.code, "READ_ONLY");
+  assertEquals(step2.broadcast.length, 0);
+  const step1 = handleBinary(encodeSyncStep1(Y.encodeStateVector(new Y.Doc())), vstate());
+  assertEquals(step1.replies.length, 2);
+  const aw = handleBinary(new Uint8Array([0x04, 9, 9]), vstate());
+  assertEquals(aw.broadcast.length, 1);
+  assertEquals(aw.errorJson, null);
+});
+
+Deno.test("editor UPDATE funciona con auth puesta", () => {
+  resetStore();
+  const client = new Y.Doc();
+  client.getText("t").insert(0, "ok");
+  const out = handleBinary(encodeUpdate(1, Y.encodeStateAsUpdate(client)), vstate("doc1", "editor"));
+  assertEquals(out.errorJson, null);
+  assertEquals(out.broadcast.length, 1);
 });

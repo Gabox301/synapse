@@ -55,6 +55,11 @@ export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
     return ok;
   }
 
+  // Etapa 4: viewers solo leen (SYNC_STEP1) y mandan awareness; el resto
+  // de escritura se descarta con READ_ONLY sin cerrar la conexión.
+  // Sin auth (rutas internas/tests) se permite todo como antes.
+  const readOnly = st.auth?.role === "viewer";
+
   switch (frame.type) {
     case FRAME_SYNC_STEP1: {
       try {
@@ -66,6 +71,10 @@ export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
       return ok;
     }
     case FRAME_SYNC_STEP2: {
+      if (readOnly) {
+        ok.errorJson = errorPayload("READ_ONLY", "el rol viewer no puede enviar updates");
+        return ok;
+      }
       try {
         applyClientUpdate(st.documentId, -1, frame.payload);
       } catch (err) {
@@ -75,6 +84,10 @@ export function handleBinary(data: Uint8Array, st: ConnState): RouteOutcome {
       return ok;
     }
     case FRAME_UPDATE: {
+      if (readOnly) {
+        ok.errorJson = errorPayload("READ_ONLY", "el rol viewer no puede enviar updates");
+        return ok;
+      }
       try {
         applyClientUpdate(st.documentId, frame.cseq ?? -1, frame.payload);
         ok.broadcast = [relayUpdate(frame.payload)];

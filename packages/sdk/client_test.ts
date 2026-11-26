@@ -8,14 +8,14 @@ class MockTransport implements Transport {
   closedWith: number | undefined;
   private openCb: (() => void) | null = null;
   private msgCb: ((data: string | Uint8Array | ArrayBuffer) => void) | null = null;
-  private closeCb: (() => void) | null = null;
+  private closeCb: ((code: number) => void) | null = null;
 
   send(data: string | Uint8Array): void {
     this.sent.push(data);
   }
   close(code?: number): void {
     this.closedWith = code;
-    this.closeCb?.();
+    this.closeCb?.(code ?? 1000);
   }
   onOpen(cb: () => void): void {
     this.openCb = cb;
@@ -23,7 +23,7 @@ class MockTransport implements Transport {
   onMessage(cb: (data: string | Uint8Array | ArrayBuffer) => void): void {
     this.msgCb = cb;
   }
-  onClose(cb: () => void): void {
+  onClose(cb: (code: number) => void): void {
     this.closeCb = cb;
   }
   emitOpen(): void {
