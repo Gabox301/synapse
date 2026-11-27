@@ -12,7 +12,7 @@ import {
   removeRemoteStates,
 } from "./realtime/awareness.ts";
 import { metrics } from "./realtime/metrics.ts";
-import { RateLimiter } from "./realtime/ratelimit.ts";
+import { CLOSE_AFTER_DROPS, CONN_LIMIT, RateLimiter, USER_LIMIT } from "./realtime/ratelimit.ts";
 import { resolveRole } from "./auth/access.ts";
 import { getUserById } from "./auth/sessions.ts";
 import { consumeTicket } from "./auth/tickets.ts";
@@ -43,9 +43,9 @@ const sockets = new Set<WebSocket>();
 
 // Rate limiting (Etapa 4 T5): por conexión y por usuario.
 // Ráfagas cortas pasan; abuso acumulado cierra con 4429.
-const connLimiter = new RateLimiter({ capacity: 100, refillPerSec: 50 });
-const userLimiter = new RateLimiter({ capacity: 200, refillPerSec: 100 });
-const RATE_CLOSE_AFTER_DROPS = 25;
+const connLimiter = new RateLimiter(CONN_LIMIT);
+const userLimiter = new RateLimiter(USER_LIMIT);
+const RATE_CLOSE_AFTER_DROPS = CLOSE_AFTER_DROPS;
 let nextConnId = 0;
 
 // Etapa 6: bus Redis entre instancias (canal por doc, instance-id, sin loops).
