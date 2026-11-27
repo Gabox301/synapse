@@ -247,6 +247,10 @@ importers:
       yjs:
         specifier: ^13.6.27
         version: 13.6.33
+    devDependencies:
+      fake-indexeddb:
+        specifier: ^6.2.8
+        version: 6.2.8
 
 packages:
 
@@ -1264,6 +1268,10 @@ packages:
   escape-string-regexp@4.0.0:
     resolution: {integrity: sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==}
     engines: {node: '>=10'}
+
+  fake-indexeddb@6.2.8:
+    resolution: {integrity: sha512-mpVW/HLUqwKXJ6F/s0hMgdK1eQfM4ncTHDioNGHWL0WKV3VcZCoZq1NKgboBbAge07aRCO7L48yziKssL59XEQ==}
+    engines: {node: '>=18'}
 
   get-tsconfig@4.14.3:
     resolution: {integrity: sha512-++QEw4DIY7WGoukz+/+A/8dGYPT9l9yIadnmSgZ8Rjr3YVSVDipQSO9CdnJo9ePqFqUUqh+wk9uIaoiAwsiPkA==}
@@ -2456,6 +2464,8 @@ snapshots:
       '@esbuild/win32-x64': 0.27.7
 
   escape-string-regexp@4.0.0: {}
+
+  fake-indexeddb@6.2.8: {}
 
   get-tsconfig@4.14.3:
     dependencies:

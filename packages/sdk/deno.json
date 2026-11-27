@@ -1,5 +1,8 @@
 {
   "name": "@synapse/sdk",
   "version": "0.1.0",
-  "exports": "./mod.ts"
+  "exports": "./mod.ts",
+  "compilerOptions": {
+    "lib": ["esnext", "dom", "deno.ns"]
+  }
 }
