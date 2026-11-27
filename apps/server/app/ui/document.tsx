@@ -69,9 +69,12 @@ export function DocumentShell(
     memberError?: string;
     shareToken?: string;
     shareLinks: ShareLinkMeta[];
+    kind: string;
+    language: string;
   }>,
 ) {
-  const { docId, title, ticket, baseUrl, origin, email, role, docs, q, members, activity, memberError, shareToken, shareLinks } = handle.props;
+  const { docId, title, ticket, baseUrl, origin, email, role, docs, q, members, activity, memberError, shareToken, shareLinks, kind, language } = handle.props;
+  const isCode = kind === "code";
   const mine = docs.filter((d) => d.mine);
   const shared = docs.filter((d) => !d.mine);
   const isOwner = role === "owner";
@@ -82,6 +85,9 @@ export function DocumentShell(
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Synapse — {title}</title>
         <link rel="stylesheet" href="/assets/app/ui/public/shell.css" />
+        {isCode ? (
+          <link rel="stylesheet" href="/assets/app/actions/documents/edit/public/code.bundle.css" />
+        ) : null}
       </head>
       <body class="syn-ide">
         <header class="syn-topbar">
@@ -94,6 +100,22 @@ export function DocumentShell(
             </nav>
           </div>
           <div class="syn-userbox">
+            {isCode && role !== "viewer" ? (
+              <form method="post" action={`/api/documents/${docId}/language`} class="syn-langform">
+                <select name="language" aria-label="Lenguaje" defaultValue={language}>
+                  <option value="typescript">TypeScript</option>
+                  <option value="javascript">JavaScript</option>
+                  <option value="python">Python</option>
+                  <option value="rust">Rust</option>
+                  <option value="go">Go</option>
+                  <option value="sql">SQL</option>
+                  <option value="json">JSON</option>
+                  <option value="markdown">Markdown</option>
+                  <option value="plaintext">Texto</option>
+                </select>
+                <button type="submit" class="syn-ghost">Cambiar</button>
+              </form>
+            ) : null}
             <span id="syn-conn-top" class="syn-dot" data-state="connecting">conectando</span>
             <span class="syn-email">{email}</span>
             <form method="post" action="/api/logout">
@@ -196,15 +218,28 @@ export function DocumentShell(
               <a href="/documents" role="tab" aria-selected="false" title="Todos">＋</a>
             </div>
             <main class="syn-editorpane">
-              <div
-                id="syn-editor"
-                data-doc-id={docId}
-                data-ticket={ticket}
-                data-base-url={baseUrl}
-                data-name={email.split("@")[0] || "anon"}
-              >
-                <p>Conectando al documento…</p>
-              </div>
+              {isCode ? (
+                <div
+                  id="syn-code-editor"
+                  data-doc-id={docId}
+                  data-ticket={ticket}
+                  data-base-url={baseUrl}
+                  data-language={language}
+                  data-name={email.split("@")[0] || "anon"}
+                >
+                  <p>Conectando al documento…</p>
+                </div>
+              ) : (
+                <div
+                  id="syn-editor"
+                  data-doc-id={docId}
+                  data-ticket={ticket}
+                  data-base-url={baseUrl}
+                  data-name={email.split("@")[0] || "anon"}
+                >
+                  <p>Conectando al documento…</p>
+                </div>
+              )}
             </main>
           </div>
           <aside class="syn-rail">
@@ -238,7 +273,11 @@ export function DocumentShell(
             seq: <b id="syn-seq">…</b>
           </span>
         </footer>
-        <script type="module" src="/assets/app/actions/documents/edit/public/editor.bundle.js"></script>
+        {isCode ? (
+          <script type="module" src="/assets/app/actions/documents/edit/public/code.bundle.js"></script>
+        ) : (
+          <script type="module" src="/assets/app/actions/documents/edit/public/editor.bundle.js"></script>
+        )}
       </body>
     </html>
   );

@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build:editor": "esbuild app/actions/documents/edit/public/boot.ts --bundle --platform=browser --format=esm --outfile=app/actions/documents/edit/public/editor.bundle.js --log-level=warning"
+    "build:editor": "esbuild app/actions/documents/edit/public/boot.ts --bundle --platform=browser --format=esm --outfile=app/actions/documents/edit/public/editor.bundle.js --log-level=warning",
+    "build:code": "node ./scripts/build-code.mjs"
   },
   "dependencies": {
     "@synapse/sdk": "workspace:*",
@@ -12,11 +13,13 @@
     "@tiptap/pm": "^3.35.0",
     "@tiptap/starter-kit": "^3.35.0",
     "bcryptjs": "^3.0.3",
+    "monaco-editor": "^0.58.0",
     "pg": "8.23.1",
     "prosemirror-model": "^1.25.13",
     "prosemirror-state": "^1.4.4",
     "prosemirror-view": "^1.44.0",
     "remix": "^3.0.0",
+    "y-monaco": "^0.1.6",
     "y-prosemirror": "^1.3.7",
     "y-protocols": "1.0.7",
     "yjs": "^13.6.27"

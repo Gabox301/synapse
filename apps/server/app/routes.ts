@@ -10,6 +10,7 @@ export const routes = route({
   wsTicket: post("/api/documents/:id/ws-ticket"),
   membersUpsert: post("/api/documents/:id/members"),
   membersRemove: post("/api/documents/:id/members/remove"),
+  documentLanguage: post("/api/documents/:id/language"),
   shareCreate: post("/api/documents/:id/share"),
   shareRevoke: post("/api/documents/:id/share/revoke"),
   joinPage: get("/join/:token"),

@@ -21,7 +21,7 @@ import { DocumentShell } from "../ui/document.tsx";
 import { JoinShell } from "../ui/join.tsx";
 import { LoginShell } from "../ui/login.tsx";
 import { DocsShell } from "../ui/documents.tsx";
-import { listDocumentMembers, listDocumentsForUser, recentActivity } from "../../realtime/persistence.ts";
+import { listDocumentMembers, listDocumentsForUser, recentActivity, setCodeLanguage } from "../../realtime/persistence.ts";
 import { routes } from "../routes.ts";
 
 function getSessionToken(req: Request): string | null {
@@ -248,23 +248,35 @@ export default createController(routes, {
         return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
       }
       let title = "Untitled";
+      let kind = "prose";
+      let codeLanguage = "typescript";
       try {
         const ct = context.request.headers.get("content-type") ?? "";
         if (ct.includes("application/json")) {
-          const body = await context.request.json() as { title?: unknown };
+          const body = await context.request.json() as { title?: unknown; kind?: unknown; codeLanguage?: unknown };
           if (typeof body.title === "string" && body.title.trim()) title = body.title.trim();
+          if (typeof body.kind === "string" && body.kind) kind = body.kind;
+          if (typeof body.codeLanguage === "string" && body.codeLanguage) codeLanguage = body.codeLanguage;
         } else {
           const form = await context.request.formData();
           const t = form.get("title");
           if (typeof t === "string" && t.trim()) title = t.trim();
+          const k = form.get("kind");
+          if (typeof k === "string" && k) kind = k;
+          const cl = form.get("codeLanguage");
+          if (typeof cl === "string" && cl) codeLanguage = cl;
         }
       } catch {
         if (form) return redirect("/documents?error=INVALID_BODY");
         return Response.json({ error: "INVALID_BODY" }, { status: 400 });
       }
-      const id = await createDocument({ title, createdBy: session.userId });
+      if (kind !== "prose" && kind !== "code") {
+        if (form) return redirect("/documents?error=INVALID_BODY");
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      const id = await createDocument({ title, createdBy: session.userId, kind, codeLanguage });
       if (form) return redirect(`/documents/${id}`);
-      return Response.json({ id, title }, { status: 201 });
+      return Response.json({ id, title, kind }, { status: 201 });
     },
     async wsTicket(context) {
       const token = getSessionToken(context.request);
@@ -359,6 +371,46 @@ export default createController(routes, {
       }
       if (form) return back();
       return Response.json({ ok: true, userId });
+    },
+    async documentLanguage(context) {
+      const form = !wantsJson(context.request);
+      const back = (code?: string) => {
+        const id: string = context.params.id;
+        return code ? redirect(`/documents/${id}?error=${code}`) : redirect(`/documents/${id}`);
+      };
+      const token = getSessionToken(context.request);
+      const session = token ? await validateSession(token).catch(() => null) : null;
+      if (!session) {
+        if (form) return redirect("/login");
+        return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+      }
+      const documentId: string = context.params.id;
+      const role = await resolveRole(session.userId, documentId).catch(() => null);
+      if (role !== "owner" && role !== "editor") {
+        if (form) return back("FORBIDDEN");
+        return Response.json({ error: "FORBIDDEN" }, { status: 403 });
+      }
+      let language = "";
+      try {
+        const ct = context.request.headers.get("content-type") ?? "";
+        if (ct.includes("application/json")) {
+          const body = await context.request.json() as { language?: unknown };
+          language = String(body.language ?? "");
+        } else {
+          const f = await context.request.formData();
+          language = String(f.get("language") ?? "");
+        }
+      } catch {
+        if (form) return back("INVALID_BODY");
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      if (!language.trim()) {
+        if (form) return back("INVALID_BODY");
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      await setCodeLanguage(documentId, language);
+      if (form) return back();
+      return Response.json({ ok: true, language: language.trim().slice(0, 32) });
     },
     async shareCreate(context) {
       const form = !wantsJson(context.request);
@@ -486,6 +538,9 @@ export default createController(routes, {
       const members = await listDocumentMembers(documentId).catch(() => []);
       const activity = await recentActivity(documentId, 8).catch(() => []);
       const title = allDocs.find((d) => d.id === documentId)?.title || documentId;
+      const current = allDocs.find((d) => d.id === documentId);
+      const kind = current?.kind ?? "prose";
+      const language = current?.codeLanguage ?? "typescript";
       const url2 = new URL(context.request.url);
       const memberError = url2.searchParams.get("error") ?? undefined;
       const shareToken = url2.searchParams.get("share") ?? undefined;
@@ -496,6 +551,8 @@ export default createController(routes, {
           title={title}
           ticket={issued.ticket}
           baseUrl={baseUrl}
+          kind={kind}
+          language={language}
           origin={url2.origin}
           email={user?.email ?? ""}
           role={authRole}

@@ -340,13 +340,27 @@ button[type="submit"]:focus-visible {
 .syn-editorpane {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   padding: 20px 28px;
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#syn-code-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+#syn-code-editor:focus {
+  outline: none;
 }
 
 .syn-editorpane .tiptap {
   outline: none;
   min-height: 60vh;
+  flex: 1;
+  overflow-y: auto;
 }
 
 /* ===== Statusbar ===== */
@@ -419,6 +433,7 @@ button[type="submit"]:focus-visible {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .syn-tabs {
@@ -661,4 +676,26 @@ button.syn-danger:hover {
   color: var(--syn-accent);
   border: 1px dashed var(--syn-line);
   border-radius: 6px;
+}
+
+.syn-langform {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.syn-langform select,
+select[name="kind"] {
+  padding: 8px 10px;
+  font-size: 13px;
+  background: var(--syn-bg);
+  color: var(--syn-ink);
+  border: 1px solid var(--syn-line);
+  border-radius: 6px;
+}
+
+.syn-langform select:focus-visible,
+select[name="kind"]:focus-visible {
+  outline: 2px solid var(--syn-accent);
+  outline-offset: 1px;
 }

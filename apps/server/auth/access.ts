@@ -40,17 +40,24 @@ export async function resolveRole(userId: string, documentId: string): Promise<R
   return null;
 }
 
+export type DocumentKind = "prose" | "code";
+
 export async function createDocument(opts: {
   id?: string;
   workspaceId?: string | null;
   title?: string;
   createdBy: string;
+  kind?: DocumentKind;
+  codeLanguage?: string;
 }): Promise<string> {
   const id = opts.id ?? `doc_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const kind: DocumentKind = opts.kind ?? "prose";
+  if (kind !== "prose" && kind !== "code") throw new Error(`INVALID_DOC: kind desconocido ${opts.kind}`);
+  const language = kind === "code" ? (opts.codeLanguage?.trim() || "typescript") : null;
   await getPool().query(
-    `INSERT INTO documents (id, workspace_id, title, created_by)
-     VALUES ($1, $2, $3, $4)`,
-    [id, opts.workspaceId ?? null, opts.title ?? "Untitled", opts.createdBy],
+    `INSERT INTO documents (id, workspace_id, title, created_by, kind, code_language)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, opts.workspaceId ?? null, opts.title ?? "Untitled", opts.createdBy, kind, language],
   );
   await addDocumentMember(id, opts.createdBy, "owner");
   return id;

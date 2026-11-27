@@ -254,6 +254,14 @@ export async function withDocLock<T>(
   }
 }
 
+export async function setCodeLanguage(documentId: string, language: string): Promise<void> {
+  const lang = language.trim().slice(0, 32) || "typescript";
+  await getPool().query(
+    "UPDATE documents SET code_language = $2, updated_at = now() WHERE id = $1 AND kind = 'code'",
+    [documentId, lang],
+  );
+}
+
 export interface ListedDocument {
   id: string;
   title: string;
@@ -261,6 +269,8 @@ export interface ListedDocument {
   updatedAt: string;
   /** true si el usuario lo creó. */
   mine: boolean;
+  kind: string;
+  codeLanguage: string | null;
 }
 
 /**
@@ -275,8 +285,10 @@ export async function listDocumentsForUser(userId: string): Promise<ListedDocume
     role: string | null;
     created_by: string | null;
     updated_at: Date | string;
+    kind: string;
+    code_language: string | null;
   }>(
-    `SELECT d.id, d.title, m.role, d.created_by, d.updated_at
+    `SELECT d.id, d.title, m.role, d.created_by, d.updated_at, d.kind, d.code_language
      FROM documents d
      LEFT JOIN document_members m
        ON m.document_id = d.id AND m.user_id = $1
@@ -293,6 +305,8 @@ export async function listDocumentsForUser(userId: string): Promise<ListedDocume
     role: r.role ?? (r.created_by === userId ? "owner" : "viewer"),
     updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
     mine: r.created_by === userId,
+    kind: r.kind,
+    codeLanguage: r.code_language,
   }));
 }
 
