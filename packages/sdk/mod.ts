@@ -5,3 +5,4 @@ export { browserTransport } from "./transport.ts";
 export type { Transport } from "./transport.ts";
 export { memoryStorage } from "./storage.ts";
 export type { SynapseStorage } from "./storage.ts";
+export { indexedDbStorage } from "./indexeddb.ts";

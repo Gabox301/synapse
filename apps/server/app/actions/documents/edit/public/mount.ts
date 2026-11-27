@@ -4,6 +4,7 @@ import type { Awareness } from "y-protocols/awareness";
 import { yCursorPlugin, ySyncPlugin, yUndoPlugin } from "y-prosemirror";
 import type * as Y from "yjs";
 import { SynapseClient } from "@synapse/sdk";
+import { indexedDbStorage } from "@synapse/sdk";
 import { SUPPORTED_SCHEMA_VERSION } from "../../../../../../../packages/protocol/schema.ts";
 
 export interface MountOptions {
@@ -70,6 +71,10 @@ export function mountEditor(
     ticket: opts.ticket,
     baseUrl: opts.baseUrl,
     onError,
+    // Persistencia local real (Etapa 5): sobrevive cierre/recarga; al
+    // volver, el snapshot hidrata el doc antes del handshake y el resync
+    // trae solo el diff. mount.ts corre solo en browser (clientEntry).
+    storage: indexedDbStorage(),
     // Fail-closed (Etapa 5): el editor se monta recién cuando el servidor
     // confirmó un schema TipTap soportado. Con uno más nuevo no se monta ni
     // se escribe: montar con un schema viejo podría borrar nodos desconocidos.

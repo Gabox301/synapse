@@ -5,9 +5,9 @@
   "type": "module",
   "dependencies": {
     "@synapse/sdk": "workspace:*",
-    "@tiptap/core": "^2.27.3",
-    "@tiptap/pm": "^2.27.3",
-    "@tiptap/starter-kit": "^2.27.3",
+    "@tiptap/core": "^3.35.0",
+    "@tiptap/pm": "^3.35.0",
+    "@tiptap/starter-kit": "^3.35.0",
     "bcryptjs": "^3.0.3",
     "pg": "8.23.1",
     "prosemirror-model": "^1.25.13",
@@ -19,7 +19,7 @@
     "yjs": "^13.6.27"
   },
   "devDependencies": {
-    "@types/node": "^26.6.10",
+    "@types/node": "^26.6.11",
     "@types/pg": "^8.23.1"
   }
 }
