@@ -1,16 +1,29 @@
 import { router } from "./app/router.ts";
 import type { ConnState } from "./realtime/handler.ts";
 import { handleBinary } from "./realtime/handler.ts";
-import { handleAwarenessFrame, frameAwareness, identityFor, releaseConnection, releaseDocument } from "./realtime/awareness.ts";
+import {
+  frameAwareness,
+  handleAwarenessFrame,
+  identityFor,
+  releaseConnection,
+  releaseDocument,
+} from "./realtime/awareness.ts";
 import { metrics } from "./realtime/metrics.ts";
 import { RateLimiter } from "./realtime/ratelimit.ts";
 import { resolveRole } from "./auth/access.ts";
 import { getUserById } from "./auth/sessions.ts";
 import { consumeTicket } from "./auth/tickets.ts";
-import { enqueueUpdate, ensureLoaded, evictIfEmpty } from "./realtime/durability.ts";
+import {
+  enqueueUpdate,
+  ensureLoaded,
+  evictIfEmpty,
+} from "./realtime/durability.ts";
+import { CLOSE_CODES } from "../../packages/protocol/errors.ts";
+import { SUPPORTED_SCHEMA_VERSION } from "../../packages/protocol/schema.ts";
 
 const PORT = Number(Deno.env.get("PORT") ?? "44100");
-const ALLOWED_ORIGINS = (Deno.env.get("ALLOWED_ORIGINS") ?? "http://localhost:44100").split(",");
+const ALLOWED_ORIGINS =
+  (Deno.env.get("ALLOWED_ORIGINS") ?? "http://localhost:44100").split(",");
 
 const MAX_MSG_BYTES = 64 * 1024;
 const rooms = new Map<string, Set<WebSocket>>();
@@ -27,6 +40,30 @@ function isOriginAllowed(req: Request): boolean {
   const origin = req.headers.get("origin");
   if (!origin) return true; // curl / no-browser
   return ALLOWED_ORIGINS.includes(origin);
+}
+
+/** El guard de schema lanza con prefijo SCHEMA_UNSUPPORTED (ver durability.ts). */
+function isSchemaUnsupported(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith("SCHEMA_UNSUPPORTED");
+}
+
+/**
+ * Guard de schema (Etapa 5): se rechaza la sesión sin cargar el doc en memoria.
+ * Se usa el cierre 4415 para que el cliente sepa que debe actualizar la app.
+ */
+function rejectUnsupportedSchema(socket: WebSocket, err: unknown): void {
+  metrics.inc("synapse_rejections_total", { reason: "schema_unsupported" });
+  if (socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({
+    type: "document:error",
+    payload: {
+      code: "SCHEMA_UNSUPPORTED",
+      message: err instanceof Error
+        ? err.message
+        : "schema del documento no soportado",
+    },
+  }));
+  socket.close(CLOSE_CODES.SCHEMA_UPGRADE_REQUIRED);
 }
 
 async function handleWS(req: Request): Promise<Response> {
@@ -65,7 +102,9 @@ async function handleWS(req: Request): Promise<Response> {
     return new Response("unsupported protocol", { status: 400 });
   }
 
-  const { socket, response } = Deno.upgradeWebSocket(req, { protocol: "snp.v1" });
+  const { socket, response } = Deno.upgradeWebSocket(req, {
+    protocol: "snp.v1",
+  });
 
   socket.onopen = async () => {
     let room = rooms.get(documentId);
@@ -75,15 +114,26 @@ async function handleWS(req: Request): Promise<Response> {
     }
     room.add(socket);
     // seq real persistido (Etapa 3); ante fallo de PG se rechaza con 1011.
+    // Etapa 5: el schema_version desconocido se rechaza con 4415.
     let seq = 0;
+    let schemaVersion = SUPPORTED_SCHEMA_VERSION;
     try {
-      seq = (await ensureLoaded(documentId)).seq;
+      const loaded = await ensureLoaded(documentId);
+      seq = loaded.seq;
+      schemaVersion = loaded.schemaVersion;
     } catch (err) {
+      if (isSchemaUnsupported(err)) {
+        rejectUnsupportedSchema(socket, err);
+        return;
+      }
       console.error(`[ws] load ${documentId} falló:`, err);
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({
           type: "document:error",
-          payload: { code: "INTERNAL", message: "no se pudo cargar el documento" },
+          payload: {
+            code: "INTERNAL",
+            message: "no se pudo cargar el documento",
+          },
         }));
         socket.close(1011);
       }
@@ -92,7 +142,7 @@ async function handleWS(req: Request): Promise<Response> {
     if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({
       type: "document:joined",
-      payload: { documentId, role, seq },
+      payload: { documentId, role, seq, schemaVersion },
     }));
     sockets.add(socket);
     metrics.set("synapse_ws_connections", sockets.size);
@@ -106,7 +156,12 @@ async function handleWS(req: Request): Promise<Response> {
     unknownCount: 0,
     awarenessIds: new Set<number>(),
     rateDrops: 0,
-    auth: { userId: consumed.userId, role, name: identity.name, color: identity.color },
+    auth: {
+      userId: consumed.userId,
+      role,
+      name: identity.name,
+      color: identity.color,
+    },
   };
 
   socket.onmessage = async (ev) => {
@@ -116,11 +171,18 @@ async function handleWS(req: Request): Promise<Response> {
       try {
         await ensureLoaded(documentId);
       } catch (err) {
+        if (isSchemaUnsupported(err)) {
+          rejectUnsupportedSchema(socket, err);
+          return;
+        }
         console.error(`[ws] load ${documentId} falló:`, err);
         if (socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({
             type: "document:error",
-            payload: { code: "INTERNAL", message: "no se pudo cargar el documento" },
+            payload: {
+              code: "INTERNAL",
+              message: "no se pudo cargar el documento",
+            },
           }));
           socket.close(1011);
         }
@@ -129,9 +191,11 @@ async function handleWS(req: Request): Promise<Response> {
       // Etapa 2: frames binarios SNP v1 (SYNC_STEP1/2, UPDATE, AWARENESS).
       let bytes: Uint8Array | null = null;
       try {
-        if (ev.data instanceof Blob) bytes = new Uint8Array(await ev.data.arrayBuffer());
-        else if (ev.data instanceof ArrayBuffer) bytes = new Uint8Array(ev.data);
-        else if (ArrayBuffer.isView(ev.data)) {
+        if (ev.data instanceof Blob) {
+          bytes = new Uint8Array(await ev.data.arrayBuffer());
+        } else if (ev.data instanceof ArrayBuffer) {
+          bytes = new Uint8Array(ev.data);
+        } else if (ArrayBuffer.isView(ev.data)) {
           bytes = new Uint8Array(
             ev.data.buffer as ArrayBuffer,
             ev.data.byteOffset,
@@ -149,11 +213,16 @@ async function handleWS(req: Request): Promise<Response> {
         metrics.inc("synapse_rejections_total", { reason: "internal" });
         return;
       }
-      const inKind = bytes.length === 0 ? "empty"
-        : bytes[0] === 0x01 ? "sync_step1"
-        : bytes[0] === 0x02 ? "sync_step2"
-        : bytes[0] === 0x03 ? "update"
-        : bytes[0] === 0x04 ? "awareness"
+      const inKind = bytes.length === 0
+        ? "empty"
+        : bytes[0] === 0x01
+        ? "sync_step1"
+        : bytes[0] === 0x02
+        ? "sync_step2"
+        : bytes[0] === 0x03
+        ? "update"
+        : bytes[0] === 0x04
+        ? "awareness"
         : "unknown";
       metrics.inc("synapse_messages_in_total", { kind: inKind });
       // Etapa 4: el rol se verifica en CADA mensaje, no solo al conectar.
@@ -177,7 +246,10 @@ async function handleWS(req: Request): Promise<Response> {
             }
           }
         } catch (err) {
-          console.error(`[ws] resolveRole ${documentId} falló, se conserva rol:`, err);
+          console.error(
+            `[ws] resolveRole ${documentId} falló, se conserva rol:`,
+            err,
+          );
         }
       }
       // Etapa 4 T5: rate limiting por conexión y por usuario.
@@ -201,11 +273,17 @@ async function handleWS(req: Request): Promise<Response> {
       }
       // Awareness con identidad del servidor (Etapa 4): ruteo aparte con rewrite.
       if (bytes[0] === 0x04 && st.auth) {
-        const out = handleAwarenessFrame(documentId, socket, st.awarenessIds, bytes, {
-          userId: st.auth.userId,
-          name: st.auth.name,
-          color: st.auth.color,
-        });
+        const out = handleAwarenessFrame(
+          documentId,
+          socket,
+          st.awarenessIds,
+          bytes,
+          {
+            userId: st.auth.userId,
+            name: st.auth.name,
+            color: st.auth.color,
+          },
+        );
         if (out.relay) {
           const framed = frameAwareness(out.relay);
           metrics.inc("synapse_messages_out_total", { kind: "awareness" });
@@ -218,40 +296,61 @@ async function handleWS(req: Request): Promise<Response> {
             }
           }
         } else {
-          console.error(`[ws] awareness descartado ${documentId}: ${out.reason ?? "?"}`);
+          console.error(
+            `[ws] awareness descartado ${documentId}: ${out.reason ?? "?"}`,
+          );
         }
         return;
       }
       const out = handleBinary(bytes, st);
       if (out.replies.length > 0) {
-        metrics.inc("synapse_messages_out_total", { kind: "reply" }, out.replies.length);
+        metrics.inc(
+          "synapse_messages_out_total",
+          { kind: "reply" },
+          out.replies.length,
+        );
       }
       for (const reply of out.replies) socket.send(reply.slice().buffer);
       if (out.errorJson) {
         socket.send(out.errorJson);
         metrics.inc("synapse_messages_out_total", { kind: "error" });
         try {
-          const code = (JSON.parse(out.errorJson) as { payload?: { code?: string } }).payload?.code;
+          const code =
+            (JSON.parse(out.errorJson) as { payload?: { code?: string } })
+              .payload?.code;
           if (code) metrics.inc("synapse_rejections_total", { reason: code });
         } catch { /* errorJson siempre es JSON válido interno */ }
       }
       if (out.appliedUpdate) {
-        enqueueUpdate(documentId, socket, out.appliedUpdate.cseq, out.appliedUpdate.payload);
+        enqueueUpdate(
+          documentId,
+          socket,
+          out.appliedUpdate.cseq,
+          out.appliedUpdate.payload,
+        );
       }
       if (out.broadcast.length > 0) {
-        metrics.inc("synapse_messages_out_total", { kind: "broadcast" }, out.broadcast.length);
+        metrics.inc(
+          "synapse_messages_out_total",
+          { kind: "broadcast" },
+          out.broadcast.length,
+        );
         const room = rooms.get(documentId);
         if (room) {
           for (const peer of room) {
             if (peer !== socket && peer.readyState === WebSocket.OPEN) {
-              for (const frame of out.broadcast) peer.send(frame.slice().buffer);
+              for (const frame of out.broadcast) {
+                peer.send(frame.slice().buffer);
+              }
             }
           }
         }
       }
       if (out.closeCode) {
-        const reason = out.closeCode === 4400 ? "protocol_violation"
-          : out.closeCode === 4413 ? "message_too_large"
+        const reason = out.closeCode === 4400
+          ? "protocol_violation"
+          : out.closeCode === 4413
+          ? "message_too_large"
           : "closed";
         metrics.inc("synapse_rejections_total", { reason });
         socket.close(out.closeCode);
@@ -310,7 +409,10 @@ async function handleWS(req: Request): Promise<Response> {
       return;
     }
     room.delete(socket);
-    metrics.set("synapse_documents_active", rooms.size - (room.size === 0 ? 1 : 0));
+    metrics.set(
+      "synapse_documents_active",
+      rooms.size - (room.size === 0 ? 1 : 0),
+    );
     if (removal && room.size > 0) {
       const framed = frameAwareness(removal);
       for (const peer of room) {

@@ -38,6 +38,8 @@ export interface JoinedInfo {
   documentId: string;
   role: string;
   seq: number;
+  /** Schema TipTap del documento (ver docs/schema-evolution.md). */
+  schemaVersion: number;
 }
 
 export interface SynapseClientOptions {
@@ -376,6 +378,10 @@ export class SynapseClient {
           documentId: msg.payload.documentId,
           role: msg.payload.role,
           seq: msg.payload.seq,
+          // Forward-compat: servidores previos al guard no mandan el campo.
+          schemaVersion: typeof msg.payload.schemaVersion === "number"
+            ? msg.payload.schemaVersion
+            : 1,
         };
         this.lastJoined = info;
         this.opts.onJoined?.(info);

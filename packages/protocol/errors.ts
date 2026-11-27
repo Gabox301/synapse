@@ -10,6 +10,7 @@ export const ERROR_CODES = [
   "INVALID_UPDATE",
   "UNKNOWN_MESSAGE",
   "PROTOCOL_VERSION_UNSUPPORTED",
+  "SCHEMA_UNSUPPORTED",
   "INTERNAL",
 ] as const;
 
@@ -22,6 +23,7 @@ export const CLOSE_CODES = {
   HEARTBEAT_TIMEOUT: 4408,
   MESSAGE_TOO_LARGE: 4413,
   RATE_LIMITED: 4429,
+  SCHEMA_UPGRADE_REQUIRED: 4415,
 } as const;
 
 export type CloseCodeName = keyof typeof CLOSE_CODES;
