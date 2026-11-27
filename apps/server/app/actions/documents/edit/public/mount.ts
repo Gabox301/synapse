@@ -95,7 +95,7 @@ export function mountEditor(
     editor = new Editor({
       element: container,
       extensions: [
-        StarterKit.configure({ history: false }),
+        StarterKit.configure({ undoRedo: false }),
         Collaboration.configure({
           yXml: client.doc.getXmlFragment("prosemirror"),
           awareness: client.awareness,
