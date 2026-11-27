@@ -3,7 +3,7 @@ import { createController } from "remix/router";
 
 import { hashPassword, verifyPassword } from "../../auth/password.ts";
 import { metrics } from "../../realtime/metrics.ts";
-import { RateLimiter } from "../../realtime/ratelimit.ts";
+import { AUTH_LIMIT, RateLimiter } from "../../realtime/ratelimit.ts";
 import {
   SESSION_COOKIE,
   createSession,
@@ -44,7 +44,7 @@ function clientIp(req: Request): string {
 }
 
 // Login/registro: 20 intentos por minuto por IP (anti fuerza bruta básico).
-const authLimiter = new RateLimiter({ capacity: 20, refillPerSec: 20 / 60 });
+const authLimiter = new RateLimiter(AUTH_LIMIT);
 
 async function readCredentials(
   req: Request,

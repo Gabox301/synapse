@@ -2,13 +2,15 @@
   "name": "@synapse/sdk",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
+  "author": "Gabo",
   "type": "module",
   "exports": {
     ".": "./mod.ts"
   },
   "dependencies": {
     "@synapse/protocol": "workspace:*",
-    "y-protocols": "^1.0.6",
+    "y-protocols": "1.0.7",
     "yjs": "^13.6.27"
   },
   "devDependencies": {
