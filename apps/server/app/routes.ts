@@ -8,6 +8,8 @@ export const routes = route({
   editDocument: get("/documents/:id"),
   createDocument: post("/api/documents"),
   wsTicket: post("/api/documents/:id/ws-ticket"),
+  membersUpsert: post("/api/documents/:id/members"),
+  membersRemove: post("/api/documents/:id/members/remove"),
   register: post("/api/register"),
   login: post("/api/login"),
   logout: post("/api/logout"),

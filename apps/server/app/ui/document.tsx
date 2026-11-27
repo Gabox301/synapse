@@ -23,6 +23,14 @@ function colorFor(seed: string): string {
   return CURSOR_COLORS[hash % CURSOR_COLORS.length];
 }
 
+const MEMBER_ERRORS: Record<string, string> = {
+  FORBIDDEN: "Solo un owner gestiona miembros.",
+  EMAIL_NOT_FOUND: "Ese email no está registrado.",
+  LAST_OWNER: "El documento necesita al menos un owner: transferí antes de salir.",
+  INVALID_ROLE: "Rol inválido (owner, editor o viewer).",
+  INVALID_BODY: "Revisá los datos del formulario.",
+};
+
 function ago(iso: string): string {
   const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
   if (s < 10) return "ahora mismo";
@@ -55,11 +63,13 @@ export function DocumentShell(
     q: string;
     members: DocumentMember[];
     activity: DocActivity[];
+    memberError?: string;
   }>,
 ) {
-  const { docId, title, ticket, baseUrl, email, role, docs, q, members, activity } = handle.props;
+  const { docId, title, ticket, baseUrl, email, role, docs, q, members, activity, memberError } = handle.props;
   const mine = docs.filter((d) => d.mine);
   const shared = docs.filter((d) => !d.mine);
+  const isOwner = role === "owner";
   return () => (
     <html lang="es">
       <head>
@@ -117,15 +127,36 @@ export function DocumentShell(
             ) : null}
             <div class="syn-sidesec">
               <div class="syn-sidehead"><span>Miembros</span></div>
+              {memberError ? (
+                <p class="syn-error" role="alert">{MEMBER_ERRORS[memberError] ?? memberError}</p>
+              ) : null}
               <ul class="syn-members">
                 {members.map((m) => (
                   <li key={m.userId}>
                     <i style={{ background: colorFor(m.email) }}>{m.email.slice(0, 1).toUpperCase()}</i>
-                    <span>{m.email}<small>{m.userId === email ? "vos" : m.role}</small></span>
+                    <span>{m.email}<small>{m.email === email ? "vos" : m.role}</small></span>
                     <span class="syn-role">{m.role}</span>
                   </li>
                 ))}
               </ul>
+              {isOwner ? (
+                <form method="post" action={`/api/documents/${docId}/members`} class="syn-miniform">
+                  <input type="email" name="email" required placeholder="email@x.test" aria-label="Email del miembro" />
+                  <select name="role" aria-label="Rol" defaultValue="editor">
+                    <option value="editor">editor</option>
+                    <option value="viewer">viewer</option>
+                    <option value="owner">owner</option>
+                  </select>
+                  <button type="submit">Agregar</button>
+                </form>
+              ) : null}
+              {isOwner ? members.filter((m) => m.email !== email).map((m) => (
+                <form key={m.userId} method="post" action={`/api/documents/${docId}/members/remove`} class="syn-miniform">
+                  <input type="hidden" name="userId" value={m.userId} />
+                  <span class="syn-note">{m.email}</span>
+                  <button type="submit" class="syn-danger">Quitar</button>
+                </form>
+              )) : null}
             </div>
           </aside>
           <div class="syn-main">

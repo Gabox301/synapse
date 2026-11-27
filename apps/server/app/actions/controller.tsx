@@ -14,7 +14,7 @@ import {
   validateSession,
 } from "../../auth/sessions.ts";
 import { issueTicket } from "../../auth/tickets.ts";
-import { createDocument, resolveRole } from "../../auth/access.ts";
+import { createDocument, removeMemberGuarded, resolveRole, setMemberRole } from "../../auth/access.ts";
 import { assets } from "../assets.ts";
 import { DocumentShell } from "../ui/document.tsx";
 import { LoginShell } from "../ui/login.tsx";
@@ -247,6 +247,90 @@ export default createController(routes, {
       const { ticket } = await issueTicket(session.userId, documentId);
       return Response.json({ ticket });
     },
+    async membersUpsert(context) {
+      const form = !wantsJson(context.request);
+      const back = (code?: string) => {
+        const id: string = context.params.id;
+        return code ? redirect(`/documents/${id}?error=${code}`) : redirect(`/documents/${id}`);
+      };
+      const token = getSessionToken(context.request);
+      const session = token ? await validateSession(token).catch(() => null) : null;
+      if (!session) {
+        if (form) return redirect("/login");
+        return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+      }
+      const documentId: string = context.params.id;
+      let email = "";
+      let role = "";
+      try {
+        const ct = context.request.headers.get("content-type") ?? "";
+        if (ct.includes("application/json")) {
+          const body = await context.request.json() as { email?: unknown; role?: unknown };
+          email = String(body.email ?? "");
+          role = String(body.role ?? "");
+        } else {
+          const f = await context.request.formData();
+          email = String(f.get("email") ?? "");
+          role = String(f.get("role") ?? "");
+        }
+      } catch {
+        if (form) return back("INVALID_BODY");
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      const target = await findUserByEmail(email.trim().toLowerCase()).catch(() => null);
+      if (!target) {
+        if (form) return back("EMAIL_NOT_FOUND");
+        return Response.json({ error: "EMAIL_NOT_FOUND" }, { status: 404 });
+      }
+      try {
+        await setMemberRole(documentId, target.id, role, session.userId);
+      } catch (err) {
+        const code = String((err as Error).message).split(":")[0];
+        const status = code === "FORBIDDEN" ? 403 : code === "LAST_OWNER" ? 409 : 400;
+        if (form) return back(code);
+        return Response.json({ error: code }, { status });
+      }
+      if (form) return back();
+      return Response.json({ ok: true, userId: target.id, role });
+    },
+    async membersRemove(context) {
+      const form = !wantsJson(context.request);
+      const back = (code?: string) => {
+        const id: string = context.params.id;
+        return code ? redirect(`/documents/${id}?error=${code}`) : redirect(`/documents/${id}`);
+      };
+      const token = getSessionToken(context.request);
+      const session = token ? await validateSession(token).catch(() => null) : null;
+      if (!session) {
+        if (form) return redirect("/login");
+        return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+      }
+      const documentId: string = context.params.id;
+      let userId = "";
+      try {
+        const ct = context.request.headers.get("content-type") ?? "";
+        if (ct.includes("application/json")) {
+          const body = await context.request.json() as { userId?: unknown };
+          userId = String(body.userId ?? "");
+        } else {
+          const f = await context.request.formData();
+          userId = String(f.get("userId") ?? "");
+        }
+      } catch {
+        if (form) return back("INVALID_BODY");
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      try {
+        await removeMemberGuarded(documentId, userId, session.userId);
+      } catch (err) {
+        const code = String((err as Error).message).split(":")[0];
+        const status = code === "FORBIDDEN" ? 403 : code === "LAST_OWNER" ? 409 : 400;
+        if (form) return back(code);
+        return Response.json({ error: code }, { status });
+      }
+      if (form) return back();
+      return Response.json({ ok: true, userId });
+    },
     async editDocument(context) {
       // Etapa 4: requiere sesión y acceso; el ticket es real y de un solo uso.
       const token = getSessionToken(context.request);
@@ -267,6 +351,7 @@ export default createController(routes, {
       const members = await listDocumentMembers(documentId).catch(() => []);
       const activity = await recentActivity(documentId, 8).catch(() => []);
       const title = allDocs.find((d) => d.id === documentId)?.title || documentId;
+      const memberError = new URL(context.request.url).searchParams.get("error") ?? undefined;
       return context.render(
         <DocumentShell
           docId={documentId}
@@ -276,6 +361,7 @@ export default createController(routes, {
           email={user?.email ?? ""}
           role={authRole}
           docs={docs}
+          memberError={memberError}
           q={q}
           members={members}
           activity={activity}

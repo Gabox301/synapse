@@ -591,3 +591,58 @@ button[type="submit"]:focus-visible {
     padding: 32px 12px;
   }
 }
+
+.syn-miniform {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.syn-miniform input[type="email"] {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.syn-miniform select {
+  padding: 7px 8px;
+  font-size: 13px;
+  background: var(--syn-bg);
+  color: var(--syn-ink);
+  border: 1px solid var(--syn-line);
+  border-radius: 6px;
+}
+
+.syn-miniform select:focus-visible {
+  outline: 2px solid var(--syn-accent);
+  outline-offset: 1px;
+}
+
+.syn-miniform button[type="submit"] {
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.syn-miniform .syn-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.syn-danger {
+  background: transparent;
+  color: var(--syn-danger-ink);
+  border: 1px solid var(--syn-line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button.syn-danger:hover {
+  border-color: var(--syn-bad);
+}

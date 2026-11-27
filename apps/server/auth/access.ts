@@ -75,3 +75,57 @@ export async function removeDocumentMember(documentId: string, userId: string): 
     [documentId, userId],
   );
 }
+
+function assertRole(role: string): asserts role is Role {
+  if (role !== "owner" && role !== "editor" && role !== "viewer") {
+    throw new Error(`INVALID_ROLE: rol desconocido ${role}`);
+  }
+}
+
+async function directOwners(documentId: string): Promise<string[]> {
+  const { rows } = await getPool().query<{ user_id: string }>(
+    "SELECT user_id FROM document_members WHERE document_id = $1 AND role = 'owner'",
+    [documentId],
+  );
+  return rows.map((r) => r.user_id);
+}
+
+async function requireOwner(documentId: string, actorUserId: string): Promise<void> {
+  const role = await resolveRole(actorUserId, documentId);
+  if (role !== "owner") throw new Error("FORBIDDEN: solo un owner gestiona miembros");
+}
+
+/**
+ * Agrega un miembro o le cambia el rol (upsert). Solo owner; rechaza roles
+ * inválidos y protege al último owner directo (hay que transferir antes).
+ */
+export async function setMemberRole(
+  documentId: string,
+  targetUserId: string,
+  role: string,
+  actorUserId: string,
+): Promise<void> {
+  assertRole(role);
+  await requireOwner(documentId, actorUserId);
+  if (role !== "owner") {
+    const owners = await directOwners(documentId);
+    if (owners.length === 1 && owners[0] === targetUserId) {
+      throw new Error("LAST_OWNER: el documento necesita al menos un owner");
+    }
+  }
+  await addDocumentMember(documentId, targetUserId, role);
+}
+
+/** Quita un miembro; protege al último owner directo. */
+export async function removeMemberGuarded(
+  documentId: string,
+  targetUserId: string,
+  actorUserId: string,
+): Promise<void> {
+  await requireOwner(documentId, actorUserId);
+  const owners = await directOwners(documentId);
+  if (owners.length === 1 && owners[0] === targetUserId) {
+    throw new Error("LAST_OWNER: el documento necesita al menos un owner");
+  }
+  await removeDocumentMember(documentId, targetUserId);
+}
