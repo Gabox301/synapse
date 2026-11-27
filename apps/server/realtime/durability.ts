@@ -128,6 +128,38 @@ async function loadIntoMemory(documentId: string): Promise<LoadedDoc> {
   return { doc, seq: stored.lastSeq, schemaVersion: check.version };
 }
 
+/**
+ * Re-sincroniza desde el store un doc que YA está en memoria (Etapa 6 T3).
+ * El Pub/Sub es at-most-once sin replay: si esta instancia se perdió mensajes
+ * (Redis caído, instancia de origen muerta), PG es la verdad. El merge de Yjs
+ * es idempotente, así que re-aplicar snapshot+tail es seguro.
+ * `applied` cuenta las partes aplicadas (snapshot + updates).
+ * Sin doc en memoria devuelve 0: un resync no materializa docs sin sesiones.
+ */
+export async function resyncFromStore(
+  documentId: string,
+): Promise<{ applied: number }> {
+  if (!hasDoc(documentId)) return { applied: 0 };
+  const stored = await loadDocument(documentId);
+  if (!stored) return { applied: 0 };
+  const doc = getOrCreateDoc(documentId);
+  let applied = 0;
+  if (stored.snapshot) {
+    Y.applyUpdate(doc, stored.snapshot.state);
+    applied += 1;
+  }
+  for (const update of stored.updates) {
+    Y.applyUpdate(doc, update);
+    applied += 1;
+  }
+  // Los contadores locales suben al máximo: el seq de PG es global.
+  const st = stateOf(documentId);
+  if (stored.lastSeq > st.persistedSeq) st.persistedSeq = stored.lastSeq;
+  const snapSeq = stored.snapshot?.lastSeq ?? 0;
+  if (snapSeq > st.lastSnapshotSeq) st.lastSnapshotSeq = snapSeq;
+  return { applied };
+}
+
 export function enqueueUpdate(
   documentId: string,
   conn: WebSocket,

@@ -3,7 +3,7 @@
 import * as Y from "yjs";
 import { hasDoc, resetStore } from "./documents.ts";
 import { getPool, loadDocument } from "./persistence.ts";
-import { listSnapshots } from "./persistence.ts";
+import { listSnapshots, saveBatch } from "./persistence.ts";
 import {
   createNamedSnapshot,
   enforceRetention,
@@ -13,6 +13,7 @@ import {
   flushDocument,
   persistedSeq,
   resetDurability,
+  resyncFromStore,
   restoreSnapshot,
   setAutoSnapshotEvery,
   setFlushMs,
@@ -487,6 +488,92 @@ Deno.test({
       if (loaded.doc.getText("t").toString() !== "ok") {
         throw new Error("contenido no cargó");
       }
+    });
+
+    resetDurability();
+  },
+});
+
+// Etapa 6 T3: resync desde el store de un doc que ya está en memoria (tras
+// perder el bus, otra instancia pudo commitear updates que esta no vio).
+Deno.test({
+  name: "durability/resync/**",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn(t) {
+    if (!await pgUp()) {
+      console.log("SKIP: sin postgres (docker compose up -d postgres)");
+      return;
+    }
+
+    await t.step(
+      "resyncFromStore aplica el commit de otra instancia",
+      async () => {
+        resetStore();
+        resetDurability();
+        const id = freshId("t6-resync");
+        // Instancia local: un update propio ya confirmado (seq 1).
+        const { doc } = await ensureLoaded(id);
+        doc.getText("t").insert(0, "a");
+        enqueueUpdate(
+          id,
+          mockConn() as unknown as WebSocket,
+          1,
+          Y.encodeStateAsUpdate(doc),
+        );
+        await flushDocument(id);
+        if (persistedSeq(id) !== 1) throw new Error("base no confirmada");
+        // Otra instancia carga de PG, edita y commitea DIRECTO (sin pasar por
+        // el bus): es el update que esta instancia se perdería al caerse Redis.
+        const stored = await loadDocument(id);
+        const replica = new Y.Doc();
+        if (stored?.snapshot) Y.applyUpdate(replica, stored.snapshot.state);
+        for (const u of stored?.updates ?? []) Y.applyUpdate(replica, u);
+        const sv = Y.encodeStateVector(replica);
+        replica.getText("t").insert(1, "REMOTE");
+        await saveBatch(id, [
+          { data: Y.encodeStateAsUpdate(replica, sv), authorId: null },
+        ]);
+        if (doc.getText("t").toString() !== "a") {
+          throw new Error("la memoria local ya tenía el update remoto");
+        }
+        const { applied } = await resyncFromStore(id);
+        if (applied < 1) throw new Error(`applied=${applied}, esperaba >= 1`);
+        if (doc.getText("t").toString() !== "aREMOTE") {
+          throw new Error("resync no convergió: " + doc.getText("t").toString());
+        }
+        if (persistedSeq(id) !== 2) {
+          throw new Error(`persistedSeq=${persistedSeq(id)}, esperaba 2`);
+        }
+        // Idempotente: re-aplicar el mismo store no altera el contenido.
+        await resyncFromStore(id);
+        if (doc.getText("t").toString() !== "aREMOTE") {
+          throw new Error("resync no es idempotente");
+        }
+      },
+    );
+
+    await t.step("resyncFromStore sin doc en memoria devuelve 0", async () => {
+      resetStore();
+      resetDurability();
+      const id = freshId("t6-resync-nodoc");
+      const { doc } = await ensureLoaded(id);
+      doc.getText("t").insert(0, "x");
+      enqueueUpdate(
+        id,
+        mockConn() as unknown as WebSocket,
+        1,
+        Y.encodeStateAsUpdate(doc),
+      );
+      await flushDocument(id);
+      // Sin sesiones locales el doc se evictó: el resync no lo materializa.
+      resetStore();
+      resetDurability();
+      const out = await resyncFromStore(id);
+      if (out.applied !== 0) {
+        throw new Error(`applied=${out.applied}, esperaba 0`);
+      }
+      if (hasDoc(id)) throw new Error("el resync materializó un doc sin sesiones");
     });
 
     resetDurability();

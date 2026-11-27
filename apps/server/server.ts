@@ -2,11 +2,14 @@ import { router } from "./app/router.ts";
 import type { ConnState } from "./realtime/handler.ts";
 import { handleBinary } from "./realtime/handler.ts";
 import {
+  applyRemoteAwareness,
   frameAwareness,
   handleAwarenessFrame,
   identityFor,
+  inspectAwarenessUpdate,
   releaseConnection,
   releaseDocument,
+  removeRemoteStates,
 } from "./realtime/awareness.ts";
 import { metrics } from "./realtime/metrics.ts";
 import { RateLimiter } from "./realtime/ratelimit.ts";
@@ -17,10 +20,12 @@ import {
   enqueueUpdate,
   ensureLoaded,
   evictIfEmpty,
+  resyncFromStore,
 } from "./realtime/durability.ts";
 import { applyClientUpdate, hasDoc } from "./realtime/documents.ts";
 import { createBus } from "./realtime/bus.ts";
 import type { BusMessage } from "./realtime/bus.ts";
+import { createPresence } from "./realtime/presence.ts";
 import {
   decodeFrame,
   FRAME_UPDATE,
@@ -57,10 +62,57 @@ if (bus.enabled) {
 /** Updates remotos llegados antes de que el doc esté en memoria (van tras el load). */
 const pendingRemote = new Map<string, Uint8Array[]>();
 
+/**
+ * Awareness publicado por otras instancias (Etapa 6 T3): doc -> instance-id de
+ * origen -> clientIDs que publicó. Sirve para dar de baja los cursores
+ * fantasma de una instancia que se cayó sin cerrar sus sesiones.
+ */
+const remoteAwareness = new Map<string, Map<string, Set<number>>>();
+
+const FRAME_TYPE_AWARENESS = 0x04;
+
+/** Los frames de awareness viajan por el bus con el prefijo SNP (0x04). */
+function unframeRemote(payload: Uint8Array): Uint8Array | null {
+  if (payload.length < 2 || payload[0] !== FRAME_TYPE_AWARENESS) return null;
+  return payload.subarray(1);
+}
+
+/** Anota (o da de baja) los clientIDs que publicó una instancia en un doc. */
+function trackRemoteAwareness(
+  documentId: string,
+  from: string,
+  raw: Uint8Array,
+): void {
+  const change = inspectAwarenessUpdate(raw);
+  let byInstance = remoteAwareness.get(documentId);
+  if (!byInstance) {
+    byInstance = new Map();
+    remoteAwareness.set(documentId, byInstance);
+  }
+  const mine = byInstance.get(from) ?? new Set<number>();
+  for (const id of change.added) mine.add(id);
+  for (const id of change.updated) mine.add(id);
+  for (const id of change.removed) mine.delete(id);
+  if (mine.size > 0) byInstance.set(from, mine);
+  else byInstance.delete(from);
+  if (byInstance.size === 0) remoteAwareness.delete(documentId);
+}
+
 function handleRemote(documentId: string, msg: BusMessage): void {
   const room = rooms.get(documentId);
   if (!room || room.size === 0) return;
   if (msg.kind === "awareness") {
+    // El estado remoto se mantiene fresco para poder dar de baja al que lo
+    // publicó si su instancia desaparece, y se anota su origen.
+    const raw = unframeRemote(msg.payload);
+    if (raw) {
+      try {
+        applyRemoteAwareness(documentId, raw);
+        trackRemoteAwareness(documentId, msg.from, raw);
+      } catch (err) {
+        console.error(`[bus] awareness remoto ${documentId} inválido:`, err);
+      }
+    }
     for (const peer of room) {
       if (peer.readyState === WebSocket.OPEN) {
         peer.send(msg.payload.slice().buffer);
@@ -119,6 +171,73 @@ function drainPending(documentId: string): void {
       }
     }
   }
+}
+
+/**
+ * Una instancia murió (Etapa 6 T3): se dan de baja sus estados de awareness,
+ * se difunde la remoción a la room local y por el bus, y se olvida su
+ * tracking. Los clientIDs con owner local vivo no se tocan.
+ */
+async function dropInstanceAwareness(deadId: string): Promise<void> {
+  for (const [documentId, byInstance] of [...remoteAwareness]) {
+    const ids = byInstance.get(deadId);
+    byInstance.delete(deadId);
+    if (byInstance.size === 0) remoteAwareness.delete(documentId);
+    if (!ids || ids.size === 0) continue;
+    const removal = removeRemoteStates(documentId, [...ids]);
+    if (!removal) continue;
+    const framed = frameAwareness(removal);
+    const room = rooms.get(documentId);
+    if (room) {
+      for (const peer of room) {
+        if (peer.readyState === WebSocket.OPEN) {
+          peer.send(framed.slice().buffer);
+        }
+      }
+    }
+    await bus.publishAwareness(documentId, framed).catch((err) =>
+      console.error(`[bus] publish removal ${documentId} falló:`, err)
+    );
+  }
+}
+
+/**
+ * Tras recuperar Redis (onRecovered) lo publicado mientras no había bus solo
+ * está en PG: cada doc con sesiones se re-sincroniza completo (merge
+ * idempotente; el cliente sigue mandando su state vector al reconectar).
+ */
+async function resyncOpenRooms(): Promise<void> {
+  for (const documentId of [...rooms.keys()]) {
+    try {
+      await resyncFromStore(documentId);
+    } catch (err) {
+      console.error(`[bus] resync ${documentId} falló:`, err);
+    }
+  }
+}
+
+// Etapa 6 T3: registro de instancias vivas (heartbeat con TTL) y reacción a
+// caídas y reconexiones. Sin REDIS_URL no hay bus y todo queda como antes.
+const presence = bus.enabled
+  ? createPresence({
+    redisUrl: Deno.env.get("REDIS_URL") ?? "",
+    instanceId: INSTANCE_ID,
+    ttlSec: 15,
+    beatSec: 5,
+  })
+  : null;
+
+if (presence) {
+  presence.onDead((deadId) => {
+    void dropInstanceAwareness(deadId).catch((err) =>
+      console.error(`[presence] baja de ${deadId.slice(0, 8)} falló:`, err)
+    );
+  });
+  presence.onRecovered(() => {
+    void resyncOpenRooms().catch((err) =>
+      console.error("[presence] resync tras reconexión falló:", err)
+    );
+  });
 }
 
 function isOriginAllowed(req: Request): boolean {
@@ -534,6 +653,7 @@ async function handleWS(req: Request): Promise<Response> {
     if (room.size === 0) {
       rooms.delete(documentId);
       pendingRemote.delete(documentId);
+      remoteAwareness.delete(documentId);
       if (bus.enabled) {
         void bus.unsubscribe(documentId).catch((err) =>
           console.error(`[bus] unsubscribe ${documentId} falló:`, err)
@@ -550,6 +670,15 @@ async function handleWS(req: Request): Promise<Response> {
   socket.onerror = leave;
 
   return response;
+}
+
+// Etapa 6 T3: heartbeat al boot (TTL 15s, latido 5s) para que las demás
+// instancias detecten la caída y limpien los cursores de esta. Es best-effort:
+// un Redis caído no debe impedir que el servidor empiece a servir.
+if (presence) {
+  presence.start().catch((err) =>
+    console.error("[presence] start falló:", err)
+  );
 }
 
 Deno.serve({ port: PORT }, (req) => {

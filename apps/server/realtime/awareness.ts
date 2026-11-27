@@ -165,3 +165,99 @@ export function releaseDocument(documentId: string): void {
   if (entry) entry.awareness.destroy();
   registry.delete(documentId);
 }
+
+// ---------------------------------------------------------------------------
+// Awareness distribuido (Etapa 6 T3): inspección de updates, aplicación de
+// estados remotos y remoción de los que deja una instancia caída.
+// ---------------------------------------------------------------------------
+
+/**
+ * Scratch persistente para inspeccionar updates SIN efectos sobre el estado
+ * del servidor. Es persistente (no uno por llamada) para recordar los
+ * clientIDs ya vistos y poder reportarlos como `removed` al darlos de baja.
+ */
+let inspectScratch: Awareness | null = null;
+
+/** A partir de este tamaño se podan los clientIDs inactivos del scratch. */
+const INSPECT_PRUNE_AT = 4096;
+const INSPECT_IDLE_MS = 10 * 60 * 1000;
+
+type AwarenessChange = { added: number[]; updated: number[]; removed: number[] };
+
+function inspectScratchAwareness(): Awareness {
+  if (!inspectScratch) {
+    const created = new Awareness(new Y.Doc());
+    // Este scratch no difunde: sin intervalo propio (tampoco timers vivos que
+    // los sanitizers de los tests detectarían como fuga).
+    clearInterval(created._checkInterval);
+    created._checkInterval = null;
+    inspectScratch = created;
+  }
+  const scratch = inspectScratch;
+  if (scratch.meta.size > INSPECT_PRUNE_AT) {
+    // Cota de memoria: se olvidan los clientIDs sin actividad reciente (volver
+    // a verlos se reporta como `added`, que es la lectura correcta).
+    const cutoff = Date.now() - INSPECT_IDLE_MS;
+    for (const [id, meta] of [...scratch.meta]) {
+      if (meta.lastUpdated < cutoff) {
+        scratch.meta.delete(id);
+        scratch.states.delete(id);
+      }
+    }
+  }
+  return scratch;
+}
+
+/**
+ * Qué clientIDs toca un update de awareness (sin prefijo de frame): `added`
+ * son los nuevos, `updated` los ya conocidos y `removed` los dados de baja.
+ */
+export function inspectAwarenessUpdate(
+  raw: Uint8Array,
+): { added: number[]; updated: number[]; removed: number[] } {
+  const scratch = inspectScratchAwareness();
+  let result: AwarenessChange = { added: [], updated: [], removed: [] };
+  const capture = (change: AwarenessChange) => {
+    result = change;
+  };
+  scratch.on("update", capture);
+  try {
+    applyAwarenessUpdate(scratch, raw, null);
+  } finally {
+    scratch.off("update", capture);
+  }
+  return result;
+}
+
+/**
+ * Aplica un update de awareness llegado de OTRA instancia (bus) al estado
+ * local del documento. No toca owners ni identidad: solo mantiene fresco el
+ * estado que esta instancia difunde y que puede llegar a remover.
+ */
+export function applyRemoteAwareness(
+  documentId: string,
+  raw: Uint8Array,
+): void {
+  applyAwarenessUpdate(docAwareness(documentId).awareness, raw, null);
+}
+
+/**
+ * Remueve estados de awareness de clientIDs remotos (instancia caída) y
+ * devuelve el update de remoción para difundir a la room y por el bus.
+ * Nunca toca clientIDs con owner local vivo. Devuelve null si no hay entry,
+ * si no hay ids o si esta instancia nunca vio ninguno de esos clientIDs
+ * (encodeAwarenessUpdate necesita el reloj previo para anunciar la baja).
+ */
+export function removeRemoteStates(
+  documentId: string,
+  ids: number[],
+): Uint8Array | null {
+  const entry = registry.get(documentId);
+  if (!entry || ids.length === 0) return null;
+  const known = ids.filter((id) =>
+    !entry.owners.has(id) && entry.awareness.meta.has(id)
+  );
+  if (known.length === 0) return null;
+  removeAwarenessStates(entry.awareness, known, null);
+  return encodeAwarenessUpdate(entry.awareness, known);
+}
