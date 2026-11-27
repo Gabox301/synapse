@@ -67,10 +67,12 @@ export function mountEditor(
   let destroyed = false;
 
   function setConn(state: "on" | "off" | "err", text: string): void {
-    const el = document.getElementById("syn-conn");
-    if (!el) return;
-    el.setAttribute("data-state", state);
-    el.textContent = text;
+    for (const id of ["syn-conn", "syn-conn-top"]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.setAttribute("data-state", state);
+      el.textContent = text;
+    }
   }
 
   function setSeq(seq: number): void {
@@ -130,6 +132,13 @@ export function mountEditor(
   client.setPresence({
     user: { name: opts.name ?? `anon-${client.awareness.clientID}`, color },
   });
+
+  const updateOnline = (): void => {
+    const el = document.getElementById("syn-online");
+    if (el) el.textContent = String(client.awareness.getStates().size);
+  };
+  client.awareness.on("change", updateOnline);
+  updateOnline();
 
   client.connect().catch((err: unknown) => {
     onError(

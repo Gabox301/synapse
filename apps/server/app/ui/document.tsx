@@ -1,11 +1,47 @@
 import type { Handle } from "remix/component";
 
-import type { ListedDocument } from "../../realtime/persistence.ts";
+import type {
+  DocActivity,
+  DocumentMember,
+  ListedDocument,
+} from "../../realtime/persistence.ts";
+
+const CURSOR_COLORS = [
+  "#e6194b",
+  "#3cb44b",
+  "#0082c8",
+  "#f58231",
+  "#911eb4",
+  "#46f0f0",
+  "#f032e6",
+  "#008080",
+];
+
+function colorFor(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = ((hash * 31) + seed.charCodeAt(i)) >>> 0;
+  return CURSOR_COLORS[hash % CURSOR_COLORS.length];
+}
+
+function ago(iso: string): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (s < 10) return "ahora mismo";
+  if (s < 60) return `hace ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `hace ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `hace ${h} h`;
+  return `hace ${Math.floor(h / 24)} d`;
+}
+
+function recentAt(updatedAt: string): boolean {
+  return Date.now() - new Date(updatedAt).getTime() < 3_600_000;
+}
 
 /**
- * Shell IDE del editor. El editor es un bundle esbuild autocontenido
- * (boot.ts + mountEditor); esta página solo renderiza el contenedor con la
- * sesión en data attrs, sin clientEntry de Remix.
+ * Workspace rail (design/synapse-ide/02-workspace-rail): topbar con
+ * breadcrumb, tabs, sidebar con filtro/secciones/miembros, rail derecho
+ * con presencia y actividad real de PG, y statusbar con estado vivo.
  */
 export function DocumentShell(
   handle: Handle<{
@@ -16,10 +52,14 @@ export function DocumentShell(
     email: string;
     role: string;
     docs: ListedDocument[];
+    q: string;
+    members: DocumentMember[];
+    activity: DocActivity[];
   }>,
 ) {
-  const { docId, title, ticket, baseUrl, email, role, docs } = handle.props;
-  const name = email.split("@")[0] || "anon";
+  const { docId, title, ticket, baseUrl, email, role, docs, q, members, activity } = handle.props;
+  const mine = docs.filter((d) => d.mine);
+  const shared = docs.filter((d) => !d.mine);
   return () => (
     <html lang="es">
       <head>
@@ -32,10 +72,14 @@ export function DocumentShell(
         <header class="syn-topbar">
           <div class="syn-brandline">
             <a href="/documents" class="syn-logo">Synapse</a>
-            <span class="syn-divider">/</span>
-            <span class="syn-doctitle">{title}</span>
+            <nav class="syn-crumbs" aria-label="Ubicación">
+              <a href="/documents">Mis documentos</a>
+              <span aria-hidden="true">/</span>
+              <b>{title}</b>
+            </nav>
           </div>
           <div class="syn-userbox">
+            <span id="syn-conn-top" class="syn-dot" data-state="connecting">conectando</span>
             <span class="syn-email">{email}</span>
             <form method="post" action="/api/logout">
               <button type="submit" class="syn-ghost">Salir</button>
@@ -48,25 +92,80 @@ export function DocumentShell(
               <span>Documentos</span>
               <a href="/documents" class="syn-mini">＋</a>
             </div>
+            <form method="get" class="syn-filterrow">
+              <input type="search" name="q" value={q} placeholder="Filtrar…" aria-label="Filtrar documentos" />
+            </form>
             <ul class="syn-sidelist">
-              {docs.map((d) => (
+              {mine.map((d) => (
                 <li key={d.id} class={d.id === docId ? "syn-active" : ""}>
                   <a href={`/documents/${d.id}`}>{d.title || d.id}</a>
+                  <span class={recentAt(d.updatedAt) ? "syn-st-ok" : "syn-st-idle"} title={d.updatedAt}>●</span>
                 </li>
               ))}
             </ul>
-          </aside>
-          <main class="syn-editorpane">
-            <div
-              id="syn-editor"
-              data-doc-id={docId}
-              data-ticket={ticket}
-              data-base-url={baseUrl}
-              data-name={name}
-            >
-              <p>Conectando al documento…</p>
+            {shared.length > 0 ? (
+              <div class="syn-sidesec">
+                <div class="syn-sidehead"><span>Compartidos conmigo</span></div>
+                <ul class="syn-sidelist">
+                  {shared.map((d) => (
+                    <li key={d.id} class={d.id === docId ? "syn-active" : ""}>
+                      <a href={`/documents/${d.id}`}>{d.title || d.id}</a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <div class="syn-sidesec">
+              <div class="syn-sidehead"><span>Miembros</span></div>
+              <ul class="syn-members">
+                {members.map((m) => (
+                  <li key={m.userId}>
+                    <i style={{ background: colorFor(m.email) }}>{m.email.slice(0, 1).toUpperCase()}</i>
+                    <span>{m.email}<small>{m.userId === email ? "vos" : m.role}</small></span>
+                    <span class="syn-role">{m.role}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
-          </main>
+          </aside>
+          <div class="syn-main">
+            <div class="syn-tabs" role="tablist">
+              <a href={`/documents/${docId}`} role="tab" aria-selected="true">{title}</a>
+              <a href="/documents" role="tab" aria-selected="false" title="Todos">＋</a>
+            </div>
+            <main class="syn-editorpane">
+              <div
+                id="syn-editor"
+                data-doc-id={docId}
+                data-ticket={ticket}
+                data-base-url={baseUrl}
+                data-name={email.split("@")[0] || "anon"}
+              >
+                <p>Conectando al documento…</p>
+              </div>
+            </main>
+          </div>
+          <aside class="syn-rail">
+            <div>
+              <div class="syn-sidehead"><span>En línea — <b id="syn-online">…</b></span></div>
+              <p class="syn-note">Los cursores aparecen en el editor con el color de cada miembro.</p>
+            </div>
+            <div>
+              <div class="syn-sidehead"><span>Actividad</span></div>
+              {activity.length === 0 ? (
+                <p class="syn-empty">Todavía no hay commits en este documento.</p>
+              ) : (
+                <ul class="syn-feed">
+                  {activity.map((a) => (
+                    <li key={a.seq}>
+                      <b>{a.email ?? "alguien"}</b> confirmó seq {a.seq}
+                      <time>{ago(a.at)}</time>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </aside>
         </div>
         <footer class="syn-status">
           <span id="syn-conn" class="syn-dot" data-state="connecting">conectando…</span>

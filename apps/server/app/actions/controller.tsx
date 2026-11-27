@@ -19,7 +19,7 @@ import { assets } from "../assets.ts";
 import { DocumentShell } from "../ui/document.tsx";
 import { LoginShell } from "../ui/login.tsx";
 import { DocsShell } from "../ui/documents.tsx";
-import { listDocumentsForUser } from "../../realtime/persistence.ts";
+import { listDocumentMembers, listDocumentsForUser, recentActivity } from "../../realtime/persistence.ts";
 import { routes } from "../routes.ts";
 
 function getSessionToken(req: Request): string | null {
@@ -259,8 +259,14 @@ export default createController(routes, {
       const url = new URL(context.request.url);
       const baseUrl = `${url.protocol === "https:" ? "wss" : "ws"}://${url.host}`;
       const user = await getUserById(session.userId).catch(() => null);
-      const docs = await listDocumentsForUser(session.userId).catch(() => []);
-      const title = docs.find((d) => d.id === documentId)?.title || documentId;
+      const allDocs = await listDocumentsForUser(session.userId).catch(() => []);
+      const q = new URL(context.request.url).searchParams.get("q")?.trim() ?? "";
+      const docs = q
+        ? allDocs.filter((d) => (d.title || d.id).toLowerCase().includes(q.toLowerCase()))
+        : allDocs;
+      const members = await listDocumentMembers(documentId).catch(() => []);
+      const activity = await recentActivity(documentId, 8).catch(() => []);
+      const title = allDocs.find((d) => d.id === documentId)?.title || documentId;
       return context.render(
         <DocumentShell
           docId={documentId}
@@ -270,6 +276,9 @@ export default createController(routes, {
           email={user?.email ?? ""}
           role={authRole}
           docs={docs}
+          q={q}
+          members={members}
+          activity={activity}
         />,
       );
     },

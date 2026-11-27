@@ -5,8 +5,10 @@ import {
   closePool,
   compactBefore,
   ensureDocument,
+  listDocumentMembers,
   listDocumentsForUser,
   loadDocument,
+  recentActivity,
   saveBatch,
   saveSnapshot,
   withDocLock,
@@ -153,6 +155,31 @@ Deno.test("persistence/list-mine", async (t) => {
     if (roles[own] !== "owner" || roles[shared] !== "editor") {
       throw new Error(`roles mal: ${JSON.stringify(roles)}`);
     }
+    const mined = Object.fromEntries(mine.map((d) => [d.id, d.mine]));
+    if (mined[own] !== true || mined[shared] !== false) {
+      throw new Error(`mine mal: ${JSON.stringify(mined)}`);
+    }
+  });
+
+  await t.step("miembros y actividad del documento", async () => {
+    const ts = Date.now();
+    const u1 = await createUser({ email: `mem-a-${ts}@x.test`, passwordHash: "x" });
+    const u2 = await createUser({ email: `mem-b-${ts}@x.test`, passwordHash: "x" });
+    const doc = await createDocument({ title: "con gente", createdBy: u1 });
+    await addDocumentMember(doc, u2, "viewer");
+    const members = await listDocumentMembers(doc);
+    if (members.length !== 2) throw new Error(`miembros mal: ${JSON.stringify(members)}`);
+    if (!members.some((m) => m.email.includes("mem-a-") && m.role === "owner")) {
+      throw new Error(`falta owner: ${JSON.stringify(members)}`);
+    }
+    const d = new Y.Doc();
+    d.getText("t").insert(0, "hola");
+    await saveBatch(doc, [{ data: Y.encodeStateAsUpdate(d), authorId: u1 }]);
+    const feed = await recentActivity(doc, 8);
+    if (feed.length < 1 || feed[0].email === undefined) {
+      throw new Error(`feed mal: ${JSON.stringify(feed)}`);
+    }
+    if (!feed[0].email?.includes("mem-a-")) throw new Error(`autor mal: ${JSON.stringify(feed)}`);
   });
 
   await closePool();

@@ -2,7 +2,7 @@
 // Requieren PG arriba; sin PG se saltean con aviso.
 import * as Y from "yjs";
 import { hasDoc, resetStore } from "./documents.ts";
-import { getPool, loadDocument } from "./persistence.ts";
+import { getPool, loadDocument, recentActivity } from "./persistence.ts";
 import { listSnapshots, saveBatch } from "./persistence.ts";
 import {
   createNamedSnapshot,
@@ -18,6 +18,7 @@ import {
   setAutoSnapshotEvery,
   setFlushMs,
 } from "./durability.ts";
+import { createUser } from "../auth/sessions.ts";
 
 interface MockConn {
   sent: string[];
@@ -91,6 +92,21 @@ Deno.test({
       const loaded = await loadDocument(id);
       if (!loaded || loaded.updates.length !== 2) {
         throw new Error("DB sin 2 updates");
+      }
+    });
+
+    await t.step("enqueueUpdate propaga authorId al commit", async () => {
+      const ts = Date.now();
+      const u = await createUser({ email: `auth-${ts}@x.test`, passwordHash: "x" });
+      const id = freshId("t3-author");
+      const c1 = mockConn();
+      const doc = new Y.Doc();
+      doc.getText("t").insert(0, "a");
+      enqueueUpdate(id, c1 as unknown as WebSocket, 1, Y.encodeStateAsUpdate(doc), u);
+      await flushDocument(id);
+      const feed = await recentActivity(id, 8);
+      if (!feed.some((f) => f.email?.includes("auth-"))) {
+        throw new Error("autor no registrado: " + JSON.stringify(feed));
       }
     });
 

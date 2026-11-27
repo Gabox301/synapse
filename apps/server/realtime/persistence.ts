@@ -259,6 +259,8 @@ export interface ListedDocument {
   title: string;
   role: string;
   updatedAt: string;
+  /** true si el usuario lo creó. */
+  mine: boolean;
 }
 
 /**
@@ -290,5 +292,57 @@ export async function listDocumentsForUser(userId: string): Promise<ListedDocume
     title: r.title,
     role: r.role ?? (r.created_by === userId ? "owner" : "viewer"),
     updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
+    mine: r.created_by === userId,
+  }));
+}
+
+export interface DocumentMember {
+  userId: string;
+  email: string;
+  role: string;
+}
+
+/** Miembros del documento con email, ordenados. */
+export async function listDocumentMembers(documentId: string): Promise<DocumentMember[]> {
+  const { rows } = await getPool().query<{
+    user_id: string;
+    email: string;
+    role: string;
+  }>(
+    `SELECT m.user_id, u.email, m.role
+     FROM document_members m
+     JOIN users u ON u.id = m.user_id
+     WHERE m.document_id = $1
+     ORDER BY u.email`,
+    [documentId],
+  );
+  return rows.map((r) => ({ userId: r.user_id, email: r.email, role: r.role }));
+}
+
+export interface DocActivity {
+  seq: number;
+  email: string | null;
+  at: string;
+}
+
+/** Últimos commits persistidos del documento (los más nuevos primero). */
+export async function recentActivity(documentId: string, limit = 8): Promise<DocActivity[]> {
+  const { rows } = await getPool().query<{
+    seq: string;
+    email: string | null;
+    created_at: Date | string;
+  }>(
+    `SELECT u.seq, e.email, u.created_at
+     FROM document_updates u
+     LEFT JOIN users e ON e.id = u.author_id
+     WHERE u.document_id = $1
+     ORDER BY u.seq DESC
+     LIMIT $2`,
+    [documentId, limit],
+  );
+  return rows.map((r) => ({
+    seq: Number(r.seq),
+    email: r.email,
+    at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   }));
 }
