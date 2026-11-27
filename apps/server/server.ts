@@ -2,11 +2,14 @@ import { router } from "./app/router.ts";
 import type { ConnState } from "./realtime/handler.ts";
 import { handleBinary } from "./realtime/handler.ts";
 import {
+  applyRemoteAwareness,
   frameAwareness,
   handleAwarenessFrame,
   identityFor,
+  inspectAwarenessUpdate,
   releaseConnection,
   releaseDocument,
+  removeRemoteStates,
 } from "./realtime/awareness.ts";
 import { metrics } from "./realtime/metrics.ts";
 import { RateLimiter } from "./realtime/ratelimit.ts";
@@ -17,7 +20,16 @@ import {
   enqueueUpdate,
   ensureLoaded,
   evictIfEmpty,
+  resyncFromStore,
 } from "./realtime/durability.ts";
+import { applyClientUpdate, hasDoc } from "./realtime/documents.ts";
+import { createBus } from "./realtime/bus.ts";
+import type { BusMessage } from "./realtime/bus.ts";
+import { createPresence } from "./realtime/presence.ts";
+import {
+  decodeFrame,
+  FRAME_UPDATE,
+} from "../../packages/protocol/frames.ts";
 import { CLOSE_CODES } from "../../packages/protocol/errors.ts";
 import { SUPPORTED_SCHEMA_VERSION } from "../../packages/protocol/schema.ts";
 
@@ -35,6 +47,203 @@ const connLimiter = new RateLimiter({ capacity: 100, refillPerSec: 50 });
 const userLimiter = new RateLimiter({ capacity: 200, refillPerSec: 100 });
 const RATE_CLOSE_AFTER_DROPS = 25;
 let nextConnId = 0;
+
+// Etapa 6: bus Redis entre instancias (canal por doc, instance-id, sin loops).
+// Sin REDIS_URL queda deshabilitado y todo sigue local como antes.
+const INSTANCE_ID = crypto.randomUUID();
+const bus = createBus({
+  instanceId: INSTANCE_ID,
+  redisUrl: Deno.env.get("REDIS_URL"),
+});
+if (bus.enabled) {
+  console.log(`[bus] redis activo (inst=${INSTANCE_ID.slice(0, 8)})`);
+}
+
+/** Updates remotos llegados antes de que el doc esté en memoria (van tras el load). */
+const pendingRemote = new Map<string, Uint8Array[]>();
+
+/**
+ * Awareness publicado por otras instancias (Etapa 6 T3): doc -> instance-id de
+ * origen -> clientIDs que publicó. Sirve para dar de baja los cursores
+ * fantasma de una instancia que se cayó sin cerrar sus sesiones.
+ */
+const remoteAwareness = new Map<string, Map<string, Set<number>>>();
+
+const FRAME_TYPE_AWARENESS = 0x04;
+
+/** Los frames de awareness viajan por el bus con el prefijo SNP (0x04). */
+function unframeRemote(payload: Uint8Array): Uint8Array | null {
+  if (payload.length < 2 || payload[0] !== FRAME_TYPE_AWARENESS) return null;
+  return payload.subarray(1);
+}
+
+/** Anota (o da de baja) los clientIDs que publicó una instancia en un doc. */
+function trackRemoteAwareness(
+  documentId: string,
+  from: string,
+  raw: Uint8Array,
+): void {
+  const change = inspectAwarenessUpdate(raw);
+  let byInstance = remoteAwareness.get(documentId);
+  if (!byInstance) {
+    byInstance = new Map();
+    remoteAwareness.set(documentId, byInstance);
+  }
+  const mine = byInstance.get(from) ?? new Set<number>();
+  for (const id of change.added) mine.add(id);
+  for (const id of change.updated) mine.add(id);
+  for (const id of change.removed) mine.delete(id);
+  if (mine.size > 0) byInstance.set(from, mine);
+  else byInstance.delete(from);
+  if (byInstance.size === 0) remoteAwareness.delete(documentId);
+}
+
+function handleRemote(documentId: string, msg: BusMessage): void {
+  const room = rooms.get(documentId);
+  if (!room || room.size === 0) return;
+  if (msg.kind === "awareness") {
+    // El estado remoto se mantiene fresco para poder dar de baja al que lo
+    // publicó si su instancia desaparece, y se anota su origen.
+    const raw = unframeRemote(msg.payload);
+    if (raw) {
+      try {
+        applyRemoteAwareness(documentId, raw);
+        trackRemoteAwareness(documentId, msg.from, raw);
+      } catch (err) {
+        console.error(`[bus] awareness remoto ${documentId} inválido:`, err);
+      }
+    }
+    for (const peer of room) {
+      if (peer.readyState === WebSocket.OPEN) {
+        peer.send(msg.payload.slice().buffer);
+      }
+    }
+    return;
+  }
+  if (msg.kind !== "update") return;
+  if (!hasDoc(documentId)) {
+    const q = pendingRemote.get(documentId);
+    if (q) q.push(msg.payload);
+    else pendingRemote.set(documentId, [msg.payload]);
+    return;
+  }
+  try {
+    const frame = decodeFrame(msg.payload);
+    if (frame.type !== FRAME_UPDATE) return;
+    try {
+      applyClientUpdate(documentId, 0, frame.payload);
+    } catch {
+      return;
+    }
+  } catch {
+    return;
+  }
+  for (const peer of room) {
+    if (peer.readyState === WebSocket.OPEN) {
+      peer.send(msg.payload.slice().buffer);
+    }
+  }
+}
+
+/** Aplica lo encolado mientras se cargaba el doc (conmutan: el orden no importa). */
+function drainPending(documentId: string): void {
+  const q = pendingRemote.get(documentId);
+  pendingRemote.delete(documentId);
+  if (!q || q.length === 0) return;
+  const room = rooms.get(documentId);
+  for (const raw of q) {
+    try {
+      const frame = decodeFrame(raw);
+      if (frame.type !== FRAME_UPDATE) continue;
+      try {
+        applyClientUpdate(documentId, 0, frame.payload);
+      } catch {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    if (room) {
+      for (const peer of room) {
+        if (peer.readyState === WebSocket.OPEN) {
+          peer.send(raw.slice().buffer);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Una instancia murió (Etapa 6 T3): se dan de baja sus estados de awareness,
+ * se difunde la remoción a la room local y por el bus, y se olvida su
+ * tracking. Los clientIDs con owner local vivo no se tocan.
+ */
+async function dropInstanceAwareness(deadId: string): Promise<void> {
+  for (const [documentId, byInstance] of [...remoteAwareness]) {
+    const ids = byInstance.get(deadId);
+    byInstance.delete(deadId);
+    if (byInstance.size === 0) remoteAwareness.delete(documentId);
+    if (!ids || ids.size === 0) continue;
+    const removal = removeRemoteStates(documentId, [...ids]);
+    if (!removal) continue;
+    const framed = frameAwareness(removal);
+    const room = rooms.get(documentId);
+    if (room) {
+      for (const peer of room) {
+        if (peer.readyState === WebSocket.OPEN) {
+          peer.send(framed.slice().buffer);
+        }
+      }
+    }
+    await bus.publishAwareness(documentId, framed).catch((err) =>
+      console.error(`[bus] publish removal ${documentId} falló:`, err)
+    );
+  }
+}
+
+/**
+ * Tras recuperar Redis (onRecovered) lo publicado mientras no había bus solo
+ * está en PG: cada doc con sesiones se re-sincroniza completo (merge
+ * idempotente; el cliente sigue mandando su state vector al reconectar).
+ */
+async function resyncOpenRooms(): Promise<void> {
+  for (const documentId of [...rooms.keys()]) {
+    try {
+      await resyncFromStore(documentId);
+    } catch (err) {
+      console.error(`[bus] resync ${documentId} falló:`, err);
+    }
+  }
+}
+
+// Etapa 6 T3: registro de instancias vivas (heartbeat con TTL) y reacción a
+// caídas y reconexiones. Sin REDIS_URL no hay bus y todo queda como antes.
+const presence = bus.enabled
+  ? createPresence({
+    redisUrl: Deno.env.get("REDIS_URL") ?? "",
+    instanceId: INSTANCE_ID,
+    ttlSec: 15,
+    beatSec: 5,
+  })
+  : null;
+
+if (presence) {
+  presence.onDead((deadId) => {
+    void dropInstanceAwareness(deadId).catch((err) =>
+      console.error(`[presence] baja de ${deadId.slice(0, 8)} falló:`, err)
+    );
+  });
+  presence.onRecovered(() => {
+    void (async () => {
+      try {
+        await bus.resubscribeAll();
+        await resyncOpenRooms();
+      } catch (err) {
+        console.error("[presence] resync tras reconexión falló:", err);
+      }
+    })();
+  });
+}
 
 function isOriginAllowed(req: Request): boolean {
   const origin = req.headers.get("origin");
@@ -113,6 +322,13 @@ async function handleWS(req: Request): Promise<Response> {
       rooms.set(documentId, room);
     }
     room.add(socket);
+    // Etapa 6: suscribirse ANTES de cargar (si se carga primero, se pierden
+    // los updates del intervalo; lo encolado se aplica tras el load).
+    if (bus.enabled) {
+      await bus
+        .ensureSubscribed(documentId, (m) => handleRemote(documentId, m))
+        .catch((err) => console.error(`[bus] subscribe ${documentId} falló:`, err));
+    }
     // seq real persistido (Etapa 3); ante fallo de PG se rechaza con 1011.
     // Etapa 5: el schema_version desconocido se rechaza con 4415.
     let seq = 0;
@@ -140,6 +356,7 @@ async function handleWS(req: Request): Promise<Response> {
       return;
     }
     if (socket.readyState !== WebSocket.OPEN) return;
+    drainPending(documentId);
     socket.send(JSON.stringify({
       type: "document:joined",
       payload: { documentId, role, seq, schemaVersion },
@@ -295,6 +512,11 @@ async function handleWS(req: Request): Promise<Response> {
               }
             }
           }
+          if (bus.enabled) {
+            void bus.publishAwareness(documentId, framed).catch((err) =>
+              console.error(`[bus] publish awareness ${documentId} falló:`, err)
+            );
+          }
         } else {
           console.error(
             `[ws] awareness descartado ${documentId}: ${out.reason ?? "?"}`,
@@ -343,6 +565,13 @@ async function handleWS(req: Request): Promise<Response> {
                 peer.send(frame.slice().buffer);
               }
             }
+          }
+        }
+        if (bus.enabled) {
+          for (const frame of out.broadcast) {
+            void bus.publishUpdate(documentId, frame).catch((err) =>
+              console.error(`[bus] publish update ${documentId} falló:`, err)
+            );
           }
         }
       }
@@ -420,8 +649,22 @@ async function handleWS(req: Request): Promise<Response> {
           peer.send(framed.slice().buffer);
         }
       }
+      if (bus.enabled) {
+        void bus.publishAwareness(documentId, framed).catch((err) =>
+          console.error(`[bus] publish removal ${documentId} falló:`, err)
+        );
+      }
     }
-    if (room.size === 0) rooms.delete(documentId);
+    if (room.size === 0) {
+      rooms.delete(documentId);
+      pendingRemote.delete(documentId);
+      remoteAwareness.delete(documentId);
+      if (bus.enabled) {
+        void bus.unsubscribe(documentId).catch((err) =>
+          console.error(`[bus] unsubscribe ${documentId} falló:`, err)
+        );
+      }
+    }
     // Persiste pendientes antes de liberar memoria (fire-and-forget;
     // ante caída, el cliente reenvía lo no confirmado por state vector).
     void evictIfEmpty(documentId, room).then(finishEvict).catch((err) =>
@@ -432,6 +675,32 @@ async function handleWS(req: Request): Promise<Response> {
   socket.onerror = leave;
 
   return response;
+}
+
+// Etapa 6 T3: heartbeat al boot (TTL 15s, latido 5s) para que las demás
+// instancias detecten la caída y limpien los cursores de esta. Es best-effort:
+// un Redis caído no debe impedir que el servidor empiece a servir.
+if (presence) {
+  presence.start().catch((err) =>
+    console.error("[presence] start falló:", err)
+  );
+}
+
+// Anti-entropy (Etapa 6): el broker puede cerrar conexiones idle sin aviso y
+// el cliente no re-suscribe solo: cada 60s se renuevan las suscripciones y se
+// re-sincroniza desde PG lo que haya pasado en el intervalo (merge
+// idempotente; el hueco de ms lo cubre el resync, no el bus at-most-once).
+if (bus.enabled) {
+  setInterval(() => {
+    void (async () => {
+      try {
+        await bus.resubscribeAll();
+        await resyncOpenRooms();
+      } catch (err) {
+        console.error("[bus] refresh anti-entropy falló:", err);
+      }
+    })();
+  }, 60_000);
 }
 
 Deno.serve({ port: PORT }, (req) => {

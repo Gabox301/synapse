@@ -1,12 +1,20 @@
 import { assert, assertEquals } from "jsr:@std/assert";
 import * as Y from "yjs";
-import { Awareness, applyAwarenessUpdate, encodeAwarenessUpdate } from "y-protocols/awareness";
 import {
+  Awareness,
+  applyAwarenessUpdate,
+  encodeAwarenessUpdate,
+  removeAwarenessStates,
+} from "y-protocols/awareness";
+import {
+  applyRemoteAwareness,
   frameAwareness,
   handleAwarenessFrame,
   identityFor,
+  inspectAwarenessUpdate,
   releaseConnection,
   releaseDocument,
+  removeRemoteStates,
 } from "./awareness.ts";
 
 function fakeConn(): WebSocket {
@@ -88,4 +96,74 @@ Deno.test("releaseConnection emite remoción aplicable", () => {
   // Segunda vez no hay nada que remover.
   assertEquals(releaseConnection("doc-aw-3", conn), null);
   releaseDocument("doc-aw-3");
+});
+
+Deno.test("inspectAwarenessUpdate reporta added, updated y removed", () => {
+  const doc = new Y.Doc();
+  const aw = new Awareness(doc);
+  const clientId = aw.clientID;
+  // Alta: el clientID es nuevo para el inspector.
+  aw.setLocalState({ cursor: 1 });
+  const added = inspectAwarenessUpdate(encodeAwarenessUpdate(aw, [clientId]));
+  assertEquals(added.added, [clientId]);
+  assertEquals(added.updated, []);
+  assertEquals(added.removed, []);
+  // Cambio de estado del mismo clientID: ya no es alta.
+  aw.setLocalState({ cursor: 2 });
+  const moved = inspectAwarenessUpdate(encodeAwarenessUpdate(aw, [clientId]));
+  assertEquals(moved.updated, [clientId]);
+  assertEquals(moved.added, []);
+  // Remoción explícita (el cliente cierra o la instancia lo da de baja).
+  removeAwarenessStates(aw, [clientId], "test");
+  const gone = inspectAwarenessUpdate(encodeAwarenessUpdate(aw, [clientId]));
+  assertEquals(gone.removed, [clientId]);
+  assertEquals(gone.added, []);
+  aw.destroy();
+});
+
+Deno.test("removeRemoteStates emite una remoción que limpia el estado", () => {
+  // Sin entry o sin ids no hay nada que remover.
+  assertEquals(removeRemoteStates("doc-aw-rem-0", [1234]), null);
+  // Estado de otra instancia: llega por el bus (applyRemoteAwareness).
+  const remoteDoc = new Y.Doc();
+  const remoteAw = new Awareness(remoteDoc);
+  const clientId = remoteAw.clientID;
+  remoteAw.setLocalState({ user: { name: "remota" }, cursor: 3 });
+  const update = encodeAwarenessUpdate(remoteAw, [clientId]);
+  remoteAw.destroy();
+  applyRemoteAwareness("doc-aw-rem-1", update);
+  assertEquals(removeRemoteStates("doc-aw-rem-1", []), null);
+  const removal = removeRemoteStates("doc-aw-rem-1", [clientId]);
+  assert(removal !== null, "debió emitir remoción");
+  // Aplicada sobre una réplica que tenía el estado, lo limpia.
+  const probe = new Awareness(new Y.Doc());
+  applyAwarenessUpdate(probe, update, null);
+  assert(probe.getStates().has(clientId), "falta el estado remoto");
+  applyAwarenessUpdate(probe, removal!, null);
+  assert(!probe.getStates().has(clientId), "no se removió el estado remoto");
+  probe.destroy();
+  // Repetible: el reloj ya conocido permite volver a anunciar la remoción.
+  assert(removeRemoteStates("doc-aw-rem-1", [clientId]) !== null);
+  releaseDocument("doc-aw-rem-1");
+});
+
+Deno.test("removeRemoteStates no toca conexiones locales vivas", () => {
+  const conn = fakeConn();
+  const owned = new Set<number>();
+  const { frame, clientId } = clientFrame({ name: "local" });
+  const out = handleAwarenessFrame(
+    "doc-aw-rem-2",
+    conn,
+    owned,
+    frame,
+    identityFor("u1", "x@t.l"),
+  );
+  assertEquals(out.dropped, false);
+  // Una instancia remota no puede borrar el awareness de una conexión local.
+  assertEquals(removeRemoteStates("doc-aw-rem-2", [clientId]), null);
+  assert(
+    releaseConnection("doc-aw-rem-2", conn) !== null,
+    "el owner local debía seguir intacto",
+  );
+  releaseDocument("doc-aw-rem-2");
 });
