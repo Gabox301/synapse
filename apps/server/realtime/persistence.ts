@@ -2,10 +2,12 @@
 // Un row por update (preserva author_id por update; combinar con Y.mergeUpdates
 // queda como optimización futura de almacenamiento). Los BYTEA se copian al
 // leer/escribir para evitar aliasing con el pool de Buffers de node-postgres.
+import { Buffer } from "node:buffer";
 import { Pool } from "npm:pg";
+import type { PoolClient } from "npm:pg";
 
 type PoolT = InstanceType<typeof Pool>;
-type ClientT = Awaited<ReturnType<PoolT["connect"]>>;
+type ClientT = PoolClient;
 
 const DATABASE_URL = Deno.env.get("DATABASE_URL") ??
   "postgresql://synapse:synapse@localhost:5432/synapse";

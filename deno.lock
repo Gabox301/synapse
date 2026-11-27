@@ -7,6 +7,8 @@
     "npm:@tiptap/pm@^2.27.3": "2.27.3",
     "npm:@tiptap/starter-kit@^2.27.3": "2.27.3",
     "npm:@types/node@^26.6.10": "26.6.10",
+    "npm:@types/pg@^8.23.1": "8.23.1",
+    "npm:bcryptjs@*": "3.0.3",
     "npm:bcryptjs@^3.0.3": "3.0.3",
     "npm:pg@*": "8.23.1",
     "npm:pg@8.23.1": "8.23.1",
@@ -1140,10 +1142,24 @@
     "@types/istanbul-lib-coverage@2.0.6": {
       "integrity": "sha512-2QF/t/auWm0lsy8XtKVPG19v3sSOQlJe/YHZgfjb/KBBHOGSV+J2q/S671rcq9uTBrLAXmZpqJiaQbMT+zNU1w=="
     },
+    "@types/node@24.2.0": {
+      "integrity": "sha512-3xyG3pMCq3oYCNg7/ZP+E1ooTaGB4cG8JWRsqqOYQdbWNY4zbaV0Ennrd7stjiJEFZCaybcIgpTjJWHRfBSIDw==",
+      "dependencies": [
+        "undici-types@7.10.0"
+      ]
+    },
     "@types/node@26.6.10": {
       "integrity": "sha512-WJuPHoGB8WNQuTksNF7SOQpnH02PXeDYz4iueWbBT6/hTWnShY5F3T/hoJA3fY9+uYReDZ7pyTKKx83jQa7aGg==",
       "dependencies": [
-        "undici-types"
+        "undici-types@8.9.0"
+      ]
+    },
+    "@types/pg@8.23.1": {
+      "integrity": "sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==",
+      "dependencies": [
+        "@types/node@24.2.0",
+        "pg-protocol",
+        "pg-types"
       ]
     },
     "argparse@3.0.4": {
@@ -1764,6 +1780,9 @@
     "uc.micro@3.0.0": {
       "integrity": "sha512-U3PppEkleoTnIfi8BozMx3yju3qc/L6SwqWo2Sw+54PX+PX0q9I+r1Um5HCmqD7n9VDX5/v3vQH/AjA6deDdtw=="
     },
+    "undici-types@7.10.0": {
+      "integrity": "sha512-t5Fy/nfn+14LuOc2KNYg75vZqClpAiqscVvMygNnlsHBFpSXdJaYtXMcdNLpl/Qvc3P2cB3s6lOV51nqsFq4ag=="
+    },
     "undici-types@8.9.0": {
       "integrity": "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="
     },
@@ -1818,6 +1837,7 @@
             "npm:@tiptap/pm@^2.27.3",
             "npm:@tiptap/starter-kit@^2.27.3",
             "npm:@types/node@^26.6.10",
+            "npm:@types/pg@^8.23.1",
             "npm:bcryptjs@^3.0.3",
             "npm:pg@8.23.1",
             "npm:prosemirror-model@^1.25.13",
