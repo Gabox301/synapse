@@ -6,6 +6,7 @@
     "test": "deno test --allow-net --allow-read --allow-env apps/server/realtime/ packages/protocol/ packages/sdk/ apps/server/db/ apps/server/auth/",
     "build-sdk": "deno run -A ./scripts/build-npm.ts",
     "build:editor": "pnpm --filter @synapse/server run build:editor",
-    "dev": "pnpm --filter @synapse/server run build:editor && deno run --no-check --allow-net --allow-read --allow-env --allow-ffi apps/server/server.ts",
+    "build:code": "pnpm --filter @synapse/server run build:code",
+    "dev": "pnpm --filter @synapse/server run build:editor && pnpm --filter @synapse/server run build:code && deno run --no-check --allow-net --allow-read --allow-env --allow-ffi apps/server/server.ts",
   }
 }

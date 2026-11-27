@@ -6,6 +6,9 @@ node_modules/
 dist/
 build/
 editor.bundle.js
+code.bundle.js
+code.bundle.css
+codicon-*.ttf
 npm/
 .npm/
 

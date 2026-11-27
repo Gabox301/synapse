@@ -1,5 +1,6 @@
 // Tests de integración de persistence.ts (Etapa 3 T2). Requieren PG arriba
 // (`docker compose up -d`); sin PG se saltean con aviso, igual que migrate_test.
+import { assertEquals } from "jsr:@std/assert";
 import * as Y from "yjs";
 import {
   closePool,
@@ -180,6 +181,26 @@ Deno.test("persistence/list-mine", async (t) => {
       throw new Error(`feed mal: ${JSON.stringify(feed)}`);
     }
     if (!feed[0].email?.includes("mem-a-")) throw new Error(`autor mal: ${JSON.stringify(feed)}`);
+  });
+
+  await closePool();
+});
+
+Deno.test("persistence/doc-kind", async (t) => {
+  if (!await pgUp()) {
+    console.log(SKIP_MSG);
+    return;
+  }
+
+  await t.step("code guarda kind+language; default prose", async () => {
+    const u = await createUser({ email: `kind-${Date.now()}@x.test`, passwordHash: "x" });
+    const code = await createDocument({ title: "api.ts", createdBy: u, kind: "code", codeLanguage: "typescript" });
+    const prose = await createDocument({ title: "notas", createdBy: u });
+    const mine = await listDocumentsForUser(u);
+    const byId = Object.fromEntries(mine.filter((d) => d.id === code || d.id === prose).map((d) => [d.id, d]));
+    assertEquals(byId[code]?.kind, "code");
+    assertEquals(byId[code]?.codeLanguage, "typescript");
+    assertEquals(byId[prose]?.kind, "prose");
   });
 
   await closePool();

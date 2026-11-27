@@ -35,6 +35,10 @@ export function DocsShell(
             <h2>Nuevo documento</h2>
             <form method="post" action="/api/documents" class="syn-row">
               <input type="text" name="title" placeholder="Título" maxLength={120} />
+              <select name="kind" aria-label="Tipo de documento" defaultValue="prose">
+                <option value="prose">Prosa</option>
+                <option value="code">Código</option>
+              </select>
               <button type="submit">Crear</button>
             </form>
           </section>
