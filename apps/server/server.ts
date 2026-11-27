@@ -18,6 +18,13 @@ import {
   ensureLoaded,
   evictIfEmpty,
 } from "./realtime/durability.ts";
+import { applyClientUpdate, hasDoc } from "./realtime/documents.ts";
+import { createBus } from "./realtime/bus.ts";
+import type { BusMessage } from "./realtime/bus.ts";
+import {
+  decodeFrame,
+  FRAME_UPDATE,
+} from "../../packages/protocol/frames.ts";
 import { CLOSE_CODES } from "../../packages/protocol/errors.ts";
 import { SUPPORTED_SCHEMA_VERSION } from "../../packages/protocol/schema.ts";
 
@@ -35,6 +42,84 @@ const connLimiter = new RateLimiter({ capacity: 100, refillPerSec: 50 });
 const userLimiter = new RateLimiter({ capacity: 200, refillPerSec: 100 });
 const RATE_CLOSE_AFTER_DROPS = 25;
 let nextConnId = 0;
+
+// Etapa 6: bus Redis entre instancias (canal por doc, instance-id, sin loops).
+// Sin REDIS_URL queda deshabilitado y todo sigue local como antes.
+const INSTANCE_ID = crypto.randomUUID();
+const bus = createBus({
+  instanceId: INSTANCE_ID,
+  redisUrl: Deno.env.get("REDIS_URL"),
+});
+if (bus.enabled) {
+  console.log(`[bus] redis activo (inst=${INSTANCE_ID.slice(0, 8)})`);
+}
+
+/** Updates remotos llegados antes de que el doc esté en memoria (van tras el load). */
+const pendingRemote = new Map<string, Uint8Array[]>();
+
+function handleRemote(documentId: string, msg: BusMessage): void {
+  const room = rooms.get(documentId);
+  if (!room || room.size === 0) return;
+  if (msg.kind === "awareness") {
+    for (const peer of room) {
+      if (peer.readyState === WebSocket.OPEN) {
+        peer.send(msg.payload.slice().buffer);
+      }
+    }
+    return;
+  }
+  if (msg.kind !== "update") return;
+  if (!hasDoc(documentId)) {
+    const q = pendingRemote.get(documentId);
+    if (q) q.push(msg.payload);
+    else pendingRemote.set(documentId, [msg.payload]);
+    return;
+  }
+  try {
+    const frame = decodeFrame(msg.payload);
+    if (frame.type !== FRAME_UPDATE) return;
+    try {
+      applyClientUpdate(documentId, 0, frame.payload);
+    } catch {
+      return;
+    }
+  } catch {
+    return;
+  }
+  for (const peer of room) {
+    if (peer.readyState === WebSocket.OPEN) {
+      peer.send(msg.payload.slice().buffer);
+    }
+  }
+}
+
+/** Aplica lo encolado mientras se cargaba el doc (conmutan: el orden no importa). */
+function drainPending(documentId: string): void {
+  const q = pendingRemote.get(documentId);
+  pendingRemote.delete(documentId);
+  if (!q || q.length === 0) return;
+  const room = rooms.get(documentId);
+  for (const raw of q) {
+    try {
+      const frame = decodeFrame(raw);
+      if (frame.type !== FRAME_UPDATE) continue;
+      try {
+        applyClientUpdate(documentId, 0, frame.payload);
+      } catch {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    if (room) {
+      for (const peer of room) {
+        if (peer.readyState === WebSocket.OPEN) {
+          peer.send(raw.slice().buffer);
+        }
+      }
+    }
+  }
+}
 
 function isOriginAllowed(req: Request): boolean {
   const origin = req.headers.get("origin");
@@ -113,6 +198,13 @@ async function handleWS(req: Request): Promise<Response> {
       rooms.set(documentId, room);
     }
     room.add(socket);
+    // Etapa 6: suscribirse ANTES de cargar (si se carga primero, se pierden
+    // los updates del intervalo; lo encolado se aplica tras el load).
+    if (bus.enabled) {
+      await bus
+        .ensureSubscribed(documentId, (m) => handleRemote(documentId, m))
+        .catch((err) => console.error(`[bus] subscribe ${documentId} falló:`, err));
+    }
     // seq real persistido (Etapa 3); ante fallo de PG se rechaza con 1011.
     // Etapa 5: el schema_version desconocido se rechaza con 4415.
     let seq = 0;
@@ -140,6 +232,7 @@ async function handleWS(req: Request): Promise<Response> {
       return;
     }
     if (socket.readyState !== WebSocket.OPEN) return;
+    drainPending(documentId);
     socket.send(JSON.stringify({
       type: "document:joined",
       payload: { documentId, role, seq, schemaVersion },
@@ -295,6 +388,11 @@ async function handleWS(req: Request): Promise<Response> {
               }
             }
           }
+          if (bus.enabled) {
+            void bus.publishAwareness(documentId, framed).catch((err) =>
+              console.error(`[bus] publish awareness ${documentId} falló:`, err)
+            );
+          }
         } else {
           console.error(
             `[ws] awareness descartado ${documentId}: ${out.reason ?? "?"}`,
@@ -343,6 +441,13 @@ async function handleWS(req: Request): Promise<Response> {
                 peer.send(frame.slice().buffer);
               }
             }
+          }
+        }
+        if (bus.enabled) {
+          for (const frame of out.broadcast) {
+            void bus.publishUpdate(documentId, frame).catch((err) =>
+              console.error(`[bus] publish update ${documentId} falló:`, err)
+            );
           }
         }
       }
@@ -420,8 +525,21 @@ async function handleWS(req: Request): Promise<Response> {
           peer.send(framed.slice().buffer);
         }
       }
+      if (bus.enabled) {
+        void bus.publishAwareness(documentId, framed).catch((err) =>
+          console.error(`[bus] publish removal ${documentId} falló:`, err)
+        );
+      }
     }
-    if (room.size === 0) rooms.delete(documentId);
+    if (room.size === 0) {
+      rooms.delete(documentId);
+      pendingRemote.delete(documentId);
+      if (bus.enabled) {
+        void bus.unsubscribe(documentId).catch((err) =>
+          console.error(`[bus] unsubscribe ${documentId} falló:`, err)
+        );
+      }
+    }
     // Persiste pendientes antes de liberar memoria (fire-and-forget;
     // ante caída, el cliente reenvía lo no confirmado por state vector).
     void evictIfEmpty(documentId, room).then(finishEvict).catch((err) =>
