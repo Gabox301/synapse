@@ -5,7 +5,18 @@ export const PROTOCOL_VERSION = "snp.v1";
 
 export interface DocumentJoined {
   type: "document:joined";
-  payload: { documentId: string; clientId?: string; role: string; seq: number };
+  payload: {
+    documentId: string;
+    clientId?: string;
+    role: string;
+    seq: number;
+    /**
+     * Versión del schema TipTap del documento (qué nodos/marcas entiende el
+     * editor), NO el `version` lineal de Yjs que el apéndice de la spec
+     * rechaza. 1 = StarterKit actual; ver docs/schema-evolution.md.
+     */
+    schemaVersion: number;
+  };
 }
 
 export interface DocumentAck {
@@ -55,6 +66,8 @@ export function parseControlMessage(text: string): ControlMessage {
     case "connection:pong":
       return msg as ControlMessage;
     default:
-      throw new Error(`UNKNOWN_MESSAGE: tipo de control desconocido ${String(msg.type)}`);
+      throw new Error(
+        `UNKNOWN_MESSAGE: tipo de control desconocido ${String(msg.type)}`,
+      );
   }
 }

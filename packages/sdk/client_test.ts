@@ -74,6 +74,7 @@ Deno.test("connect resuelve joined y abre con handshake SYNC_STEP1", async () =>
   const joined = await p;
   assertEquals(joined.role, "editor");
   assertEquals(events[0], "joined:editor:0");
+  client.awareness.destroy();
 });
 
 Deno.test("sync: aplica STEP2 del servidor y responde STEP1 con STEP2 propio", () => {
@@ -92,6 +93,7 @@ Deno.test("sync: aplica STEP2 del servidor y responde STEP1 con STEP2 propio", (
   const replies = t.sent.slice(before).filter((m) => typeof m !== "string") as Uint8Array[];
   assertEquals(replies.length, 1);
   assertEquals(replies[0][0], 0x02);
+  client.awareness.destroy();
 });
 
 Deno.test("update local se envía con cseq incremental y queda pendiente", () => {
@@ -107,6 +109,7 @@ Deno.test("update local se envía con cseq incremental y queda pendiente", () =>
   assertEquals(cseqOf(updates[0]), 1);
   assertEquals(cseqOf(updates[1]), 2);
   assertEquals(client.pendingCount, 2);
+  client.awareness.destroy();
 });
 
 Deno.test("UPDATE remoto (cseq 0) se aplica y se emite sin reenviar", () => {
@@ -123,6 +126,7 @@ Deno.test("UPDATE remoto (cseq 0) se aplica y se emite sin reenviar", () => {
   // Aplicar remoto no debe generar UPDATE saliente (origen interno)
   const after = (t.sent.slice(before).filter((m) => typeof m !== "string") as Uint8Array[]).filter((m) => m[0] === 0x03);
   assertEquals(after.length, 0);
+  client.awareness.destroy();
 });
 
 Deno.test("reconnect ignora el close del transporte viejo", async () => {
@@ -152,6 +156,7 @@ Deno.test("reconnect ignora el close del transporte viejo", async () => {
   const joined = await p2;
   assertEquals(joined.seq, 1);
   assertEquals(events, ["joined:editor", "joined:editor"]);
+  client.awareness.destroy();
 });
 
 Deno.test("document:ack confirma pendientes y notifica onAck", () => {
@@ -167,6 +172,7 @@ Deno.test("document:ack confirma pendientes y notifica onAck", () => {
   t.emitMessage(JSON.stringify({ type: "document:ack", payload: { upTo: 2, seq: 11 } }));
   assertEquals(client.pendingCount, 0);
   assertEquals(events.slice(-2), ["ack:1:10", "ack:2:11"]);
+  client.awareness.destroy();
 });
 
 Deno.test("frame desconocido emite error sin romper la conexión", () => {
@@ -177,6 +183,7 @@ Deno.test("frame desconocido emite error sin romper la conexión", () => {
   t.emitMessage(new Uint8Array([0xff, 0x01]).buffer);
   assertEquals(events.some((e) => e.startsWith("error:")), true);
   assertEquals(t.closedWith, undefined);
+  client.awareness.destroy();
 });
 
 Deno.test("mensajes previos al open se encolan y salen en orden tras STEP1", async () => {
@@ -191,6 +198,7 @@ Deno.test("mensajes previos al open se encolan y salen en orden tras STEP1", asy
   assertEquals(updates.length, 1);
   t.emitMessage(JSON.stringify({ type: "document:joined", payload: { documentId: "doc1", role: "editor", seq: 0 } }));
   await p;
+  client.awareness.destroy();
 });
 
 Deno.test("awareness local viaja en frame 0x04", () => {
@@ -203,4 +211,5 @@ Deno.test("awareness local viaja en frame 0x04", () => {
   const frames = t.sent.slice(before).filter((m) => typeof m !== "string") as Uint8Array[];
   assertEquals(frames.length, 1);
   assertEquals(frames[0][0], 0x04);
+  client.awareness.destroy();
 });

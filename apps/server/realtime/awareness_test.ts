@@ -6,6 +6,7 @@ import {
   handleAwarenessFrame,
   identityFor,
   releaseConnection,
+  releaseDocument,
 } from "./awareness.ts";
 
 function fakeConn(): WebSocket {
@@ -39,6 +40,7 @@ Deno.test("awareness fija identidad del servidor y registra propiedad", () => {
   assert(entry !== undefined, "falta el estado del cliente");
   assertEquals(entry!.user, { id: "u1", name: "gabo", color: id.color });
   probe.destroy();
+  releaseDocument("doc-aw-1");
 });
 
 Deno.test("spoof de clientID ajeno se descarta completo", () => {
@@ -63,6 +65,7 @@ Deno.test("spoof de clientID ajeno se descarta completo", () => {
   assertEquals(rb.relay, null);
   assertEquals(ownedB.size, 0);
   void clientId;
+  releaseDocument("doc-aw-2");
 });
 
 Deno.test("releaseConnection emite remoción aplicable", () => {
@@ -84,4 +87,5 @@ Deno.test("releaseConnection emite remoción aplicable", () => {
   probe.destroy();
   // Segunda vez no hay nada que remover.
   assertEquals(releaseConnection("doc-aw-3", conn), null);
+  releaseDocument("doc-aw-3");
 });

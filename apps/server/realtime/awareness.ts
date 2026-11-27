@@ -161,5 +161,7 @@ export function releaseConnection(documentId: string, conn: WebSocket): Uint8Arr
 
 /** Olvida todo el estado de awareness de un documento (al evictar). */
 export function releaseDocument(documentId: string): void {
+  const entry = registry.get(documentId);
+  if (entry) entry.awareness.destroy();
   registry.delete(documentId);
 }

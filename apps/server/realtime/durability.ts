@@ -4,7 +4,19 @@
 import * as Y from "yjs";
 
 import { evictDoc, getOrCreateDoc, hasDoc } from "./documents.ts";
-import { compactBefore, getSnapshot, loadDocument, saveBatch, saveSnapshot } from "./persistence.ts";
+import {
+  compactBefore,
+  getSnapshot,
+  loadDocument,
+  saveBatch,
+  saveSnapshot,
+} from "./persistence.ts";
+import { metrics } from "./metrics.ts";
+import type { SchemaVersionCheck } from "../../../packages/protocol/schema.ts";
+import {
+  checkSchemaVersion,
+  SUPPORTED_SCHEMA_VERSION,
+} from "../../../packages/protocol/schema.ts";
 
 export interface QueuedUpdate {
   conn: WebSocket;
@@ -18,6 +30,8 @@ interface DocState {
   persistedSeq: number;
   lastSnapshotSeq: number;
   flushing: boolean;
+  /** Schema TipTap con el que se cargó el doc (guard de versión). */
+  schemaVersion: number;
 }
 
 const states = new Map<string, DocState>();
@@ -46,7 +60,14 @@ export function resetDurability(): void {
 function stateOf(documentId: string): DocState {
   let st = states.get(documentId);
   if (!st) {
-    st = { queue: [], timer: null, persistedSeq: 0, lastSnapshotSeq: 0, flushing: false };
+    st = {
+      queue: [],
+      timer: null,
+      persistedSeq: 0,
+      lastSnapshotSeq: 0,
+      flushing: false,
+      schemaVersion: SUPPORTED_SCHEMA_VERSION,
+    };
     states.set(documentId, st);
   }
   return st;
@@ -56,13 +77,18 @@ export function persistedSeq(documentId: string): number {
   return states.get(documentId)?.persistedSeq ?? 0;
 }
 
+/** Doc cargado a memoria con su seq persistido y su schema TipTap. */
+export interface LoadedDoc {
+  doc: Y.Doc;
+  seq: number;
+  schemaVersion: number;
+}
+
 /** Devuelve el Y.Doc en memoria, cargándolo del store si es necesario. */
-const loading = new Map<string, Promise<{ doc: Y.Doc; seq: number }>>();
+const loading = new Map<string, Promise<LoadedDoc>>();
 
 /** Carga el doc a memoria (una sola vez ante llamadas concurrentes). */
-export function ensureLoaded(
-  documentId: string,
-): Promise<{ doc: Y.Doc; seq: number }> {
+export function ensureLoaded(documentId: string): Promise<LoadedDoc> {
   const inFlight = loading.get(documentId);
   if (inFlight) return inFlight;
   const p = loadIntoMemory(documentId).finally(() => {
@@ -72,24 +98,34 @@ export function ensureLoaded(
   return p;
 }
 
-async function loadIntoMemory(
-  documentId: string,
-): Promise<{ doc: Y.Doc; seq: number }> {
+async function loadIntoMemory(documentId: string): Promise<LoadedDoc> {
   if (hasDoc(documentId)) {
-    return { doc: getOrCreateDoc(documentId), seq: persistedSeq(documentId) };
+    return {
+      doc: getOrCreateDoc(documentId),
+      seq: persistedSeq(documentId),
+      schemaVersion: stateOf(documentId).schemaVersion,
+    };
   }
   const stored = await loadDocument(documentId);
-  const doc = getOrCreateDoc(documentId);
-  if (!stored) {
-    stateOf(documentId);
-    return { doc, seq: 0 };
+  // Guard fail-closed (Etapa 5): si el doc fue escrito con un schema TipTap
+  // más nuevo que el soportado, no se carga ni se crea en memoria.
+  const check: SchemaVersionCheck = stored
+    ? checkSchemaVersion(stored.schemaVersion)
+    : { ok: true, version: SUPPORTED_SCHEMA_VERSION };
+  if (!check.ok) {
+    throw new Error(
+      `SCHEMA_UNSUPPORTED: documento ${documentId} usa schema v${check.stored}, soportado v${check.supported}`,
+    );
   }
+  const doc = getOrCreateDoc(documentId);
+  const dst = stateOf(documentId);
+  dst.schemaVersion = check.version;
+  if (!stored) return { doc, seq: 0, schemaVersion: check.version };
   if (stored.snapshot) Y.applyUpdate(doc, stored.snapshot.state);
   for (const u of stored.updates) Y.applyUpdate(doc, u);
-  const dst = stateOf(documentId);
   dst.persistedSeq = stored.lastSeq;
   dst.lastSnapshotSeq = stored.snapshot?.lastSeq ?? 0;
-  return { doc, seq: stored.lastSeq };
+  return { doc, seq: stored.lastSeq, schemaVersion: check.version };
 }
 
 export function enqueueUpdate(
@@ -104,10 +140,15 @@ export function enqueueUpdate(
     st.timer = setTimeout(() => {
       st.timer = null;
       flushDocument(documentId).catch((err) => {
-        console.error(`[durability] flush ${documentId} falló, reintenta:`, err);
+        console.error(
+          `[durability] flush ${documentId} falló, reintenta:`,
+          err,
+        );
         st.timer = setTimeout(() => {
           st.timer = null;
-          flushDocument(documentId).catch((e) => console.error(`[durability] reintento ${documentId} falló:`, e));
+          flushDocument(documentId).catch((e) =>
+            console.error(`[durability] reintento ${documentId} falló:`, e)
+          );
         }, 1000);
       });
     }, flushMs);
@@ -123,12 +164,15 @@ export async function flushDocument(documentId: string): Promise<void> {
   st.queue = [];
   try {
     // author_id real llega en Etapa 4 (tickets con identidad); hoy es desconocido.
+    const t0 = Date.now();
     const seqs = await saveBatch(
       documentId,
       batch.map((e) => ({ data: e.update, authorId: null })),
     );
     const lastSeq = seqs[seqs.length - 1] ?? st.persistedSeq;
     st.persistedSeq = lastSeq;
+    metrics.observe("synapse_persist_seconds", (Date.now() - t0) / 1000);
+    metrics.inc("synapse_persist_total");
     const upToByConn = new Map<WebSocket, number>();
     for (const entry of batch) {
       const prev = upToByConn.get(entry.conn) ?? 0;
@@ -136,12 +180,19 @@ export async function flushDocument(documentId: string): Promise<void> {
     }
     for (const [conn, upTo] of upToByConn) {
       if (conn.readyState !== WebSocket.OPEN) continue;
-      conn.send(JSON.stringify({ type: "document:ack", payload: { upTo, seq: lastSeq } }));
+      conn.send(
+        JSON.stringify({
+          type: "document:ack",
+          payload: { upTo, seq: lastSeq },
+        }),
+      );
+      metrics.inc("synapse_acks_total");
     }
     // Snapshot automático por umbral (nunca rompe el path de ack).
     await maybeAutoSnapshot(documentId);
   } catch (err) {
     // Sin commit no hay ack: se reencola al frente para el próximo flush.
+    metrics.inc("synapse_persist_errors_total");
     st.queue.unshift(...batch);
     throw err;
   } finally {
@@ -235,7 +286,9 @@ export async function restoreSnapshot(
   opts?: { authorId?: string | null; roots?: RootSchema[] },
 ): Promise<{ restoreSeq: number; backupId: string }> {
   const snap = await getSnapshot(documentId, snapshotId);
-  if (!snap) throw new Error(`snapshot ${snapshotId} no existe en ${documentId}`);
+  if (!snap) {
+    throw new Error(`snapshot ${snapshotId} no existe en ${documentId}`);
+  }
   await flushDocument(documentId);
   const { doc } = await ensureLoaded(documentId);
   const backupId = await createNamedSnapshot(
@@ -269,8 +322,9 @@ export function inferRootKinds(doc: Y.Doc): RootSchema[] {
     } else if (type instanceof Y.Text) out.push({ name, kind: "text" });
     else if (type instanceof Y.Array) out.push({ name, kind: "array" });
     else if (type instanceof Y.Map) out.push({ name, kind: "map" });
-    else if (type instanceof Y.XmlFragment) out.push({ name, kind: "xmlfragment" });
-    else {
+    else if (type instanceof Y.XmlFragment) {
+      out.push({ name, kind: "xmlfragment" });
+    } else {
       throw new Error(
         `restore necesita schema explícito para '${name}' (tipo desconocido: ${type.constructor.name})`,
       );
@@ -302,7 +356,12 @@ function clearRoot(doc: Y.Doc, name: string, kind: RootKind): void {
   }
 }
 
-function copyRoot(live: Y.Doc, snap: Y.Doc, name: string, kind: RootKind): void {
+function copyRoot(
+  live: Y.Doc,
+  snap: Y.Doc,
+  name: string,
+  kind: RootKind,
+): void {
   switch (kind) {
     case "text":
       live.getText(name).insert(0, snap.getText(name).toString());
@@ -312,11 +371,16 @@ function copyRoot(live: Y.Doc, snap: Y.Doc, name: string, kind: RootKind): void 
       break;
     case "map": {
       const dst = live.getMap(name);
-      for (const [k, v] of snap.getMap(name).entries()) dst.set(k, cloneValue(v));
+      for (const [k, v] of snap.getMap(name).entries()) {
+        dst.set(k, cloneValue(v));
+      }
       break;
     }
     case "xmlfragment":
-      live.getXmlFragment(name).insert(0, cloneXmlChildren(snap.getXmlFragment(name)));
+      live.getXmlFragment(name).insert(
+        0,
+        cloneXmlChildren(snap.getXmlFragment(name)),
+      );
       break;
   }
 }
@@ -347,12 +411,16 @@ function cloneValue(value: unknown): unknown {
   if (value === null || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map(cloneValue);
   if (value.constructor === Object) {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cloneValue(v)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, cloneValue(v)]),
+    );
   }
   throw new Error(`restore no soporta valor ${value.constructor.name}`);
 }
 
-function cloneXmlChildren(frag: Y.XmlFragment): Array<Y.XmlElement | Y.XmlText> {
+function cloneXmlChildren(
+  frag: Y.XmlFragment,
+): Array<Y.XmlElement | Y.XmlText> {
   return frag.toArray().map((node) => {
     if (node instanceof Y.XmlElement) return cloneXmlElement(node);
     if (node instanceof Y.XmlText) return cloneXmlText(node);
@@ -372,7 +440,11 @@ function cloneXmlElement(el: Y.XmlElement): Y.XmlElement {
 function cloneXmlText(t: Y.XmlText): Y.XmlText {
   const fresh = new Y.XmlText();
   let i = 0;
-  for (const op of t.toDelta() as Array<{ insert: unknown; attributes?: Record<string, unknown> }>) {
+  for (
+    const op of t.toDelta() as Array<
+      { insert: unknown; attributes?: Record<string, unknown> }
+    >
+  ) {
     if (typeof op.insert !== "string") {
       throw new Error("restore no soporta embeds en XmlText");
     }
@@ -386,7 +458,10 @@ function cloneXmlText(t: Y.XmlText): Y.XmlText {
  * Retención: conserva los últimos `keepLast` updates y todo lo posterior al
  * último snapshot; compacta lo anterior. Devuelve filas borradas.
  */
-export async function enforceRetention(documentId: string, keepLast: number): Promise<number> {
+export async function enforceRetention(
+  documentId: string,
+  keepLast: number,
+): Promise<number> {
   await flushDocument(documentId);
   const loaded = await loadDocument(documentId);
   if (!loaded) return 0;
@@ -396,7 +471,12 @@ export async function enforceRetention(documentId: string, keepLast: number): Pr
     const tmp = new Y.Doc();
     if (loaded.snapshot) Y.applyUpdate(tmp, loaded.snapshot.state);
     for (const u of loaded.updates) Y.applyUpdate(tmp, u);
-    await saveSnapshot(documentId, Y.encodeStateAsUpdate(tmp), loaded.lastSeq, "auto");
+    await saveSnapshot(
+      documentId,
+      Y.encodeStateAsUpdate(tmp),
+      loaded.lastSeq,
+      "auto",
+    );
     snapSeq = loaded.lastSeq;
     const st = stateOf(documentId);
     if (snapSeq > st.lastSnapshotSeq) st.lastSnapshotSeq = snapSeq;

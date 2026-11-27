@@ -2,19 +2,25 @@
 // Un row por update (preserva author_id por update; combinar con Y.mergeUpdates
 // queda como optimización futura de almacenamiento). Los BYTEA se copian al
 // leer/escribir para evitar aliasing con el pool de Buffers de node-postgres.
+import { Buffer } from "node:buffer";
 import { Pool } from "npm:pg";
+import type { PoolClient } from "npm:pg";
 
 type PoolT = InstanceType<typeof Pool>;
-type ClientT = Awaited<ReturnType<PoolT["connect"]>>;
+type ClientT = PoolClient;
 
-const DATABASE_URL =
-  Deno.env.get("DATABASE_URL") ?? "postgresql://synapse:synapse@localhost:5432/synapse";
+const DATABASE_URL = Deno.env.get("DATABASE_URL") ??
+  "postgresql://synapse:synapse@localhost:5432/synapse";
 
 let pool: PoolT | null = null;
 
 export function getPool(): PoolT {
   if (!pool) {
-    pool = new Pool({ connectionString: DATABASE_URL, max: 5, connectionTimeoutMillis: 5000 });
+    pool = new Pool({
+      connectionString: DATABASE_URL,
+      max: 5,
+      connectionTimeoutMillis: 5000,
+    });
   }
   return pool;
 }
@@ -91,17 +97,26 @@ export interface LoadedDocument {
   snapshot: { state: Uint8Array; lastSeq: number } | null;
   updates: Uint8Array[];
   lastSeq: number;
+  /** Schema TipTap persistido en `documents.schema_version` (default 1). */
+  schemaVersion: number;
 }
 
-export async function loadDocument(documentId: string): Promise<LoadedDocument | null> {
+export async function loadDocument(
+  documentId: string,
+): Promise<LoadedDocument | null> {
   const pool = getPool();
-  const { rows: docs } = await pool.query<{ last_seq: string }>(
-    "SELECT last_seq FROM documents WHERE id = $1",
+  const { rows: docs } = await pool.query<
+    { last_seq: string; schema_version: number | null }
+  >(
+    "SELECT last_seq, schema_version FROM documents WHERE id = $1",
     [documentId],
   );
   if (docs.length === 0) return null;
   const lastSeq = Number(docs[0].last_seq);
-  const { rows: snaps } = await pool.query<{ state: unknown; last_seq: string }>(
+  const schemaVersion = Number(docs[0].schema_version ?? 1);
+  const { rows: snaps } = await pool.query<
+    { state: unknown; last_seq: string }
+  >(
     `SELECT state, last_seq FROM document_snapshots
      WHERE document_id = $1 ORDER BY last_seq DESC LIMIT 1`,
     [documentId],
@@ -118,6 +133,7 @@ export async function loadDocument(documentId: string): Promise<LoadedDocument |
       : null,
     updates: tail.map((r: { update_data: unknown }) => toBytes(r.update_data)),
     lastSeq,
+    schemaVersion,
   };
 }
 
@@ -133,7 +149,15 @@ export async function saveSnapshot(
     `INSERT INTO document_snapshots
        (id, document_id, state, last_seq, kind, label, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [id, documentId, toBuffer(state), lastSeq, kind, opts?.label ?? null, opts?.authorId ?? null],
+    [
+      id,
+      documentId,
+      toBuffer(state),
+      lastSeq,
+      kind,
+      opts?.label ?? null,
+      opts?.authorId ?? null,
+    ],
   );
   return id;
 }
@@ -151,16 +175,24 @@ export async function getSnapshot(
   documentId: string,
   snapshotId: string,
 ): Promise<{ state: Uint8Array; lastSeq: number; kind: string } | null> {
-  const { rows } = await getPool().query<{ state: unknown; last_seq: string; kind: string }>(
+  const { rows } = await getPool().query<
+    { state: unknown; last_seq: string; kind: string }
+  >(
     `SELECT state, last_seq, kind FROM document_snapshots
      WHERE document_id = $1 AND id = $2`,
     [documentId, snapshotId],
   );
   if (rows.length === 0) return null;
-  return { state: toBytes(rows[0].state), lastSeq: Number(rows[0].last_seq), kind: rows[0].kind };
+  return {
+    state: toBytes(rows[0].state),
+    lastSeq: Number(rows[0].last_seq),
+    kind: rows[0].kind,
+  };
 }
 
-export async function listSnapshots(documentId: string): Promise<SnapshotMeta[]> {
+export async function listSnapshots(
+  documentId: string,
+): Promise<SnapshotMeta[]> {
   const { rows } = await getPool().query<{
     id: string;
     kind: string;
@@ -172,7 +204,15 @@ export async function listSnapshots(documentId: string): Promise<SnapshotMeta[]>
      WHERE document_id = $1 ORDER BY last_seq`,
     [documentId],
   );
-  return rows.map((r: { id: string; kind: string; label: string | null; last_seq: string; created_at: string }) => ({
+  return rows.map((
+    r: {
+      id: string;
+      kind: string;
+      label: string | null;
+      last_seq: string;
+      created_at: string;
+    },
+  ) => ({
     id: r.id,
     kind: r.kind,
     label: r.label,
@@ -181,7 +221,10 @@ export async function listSnapshots(documentId: string): Promise<SnapshotMeta[]>
   }));
 }
 
-export async function compactBefore(documentId: string, seqExclusive: number): Promise<number> {
+export async function compactBefore(
+  documentId: string,
+  seqExclusive: number,
+): Promise<number> {
   const { rowCount } = await getPool().query(
     "DELETE FROM document_updates WHERE document_id = $1 AND seq < $2",
     [documentId, seqExclusive],
@@ -197,7 +240,9 @@ export async function withDocLock<T>(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    await client.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [documentId]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)", [
+      documentId,
+    ]);
     const out = await fn(client);
     await client.query("COMMIT");
     return out;
