@@ -234,9 +234,14 @@ if (presence) {
     );
   });
   presence.onRecovered(() => {
-    void resyncOpenRooms().catch((err) =>
-      console.error("[presence] resync tras reconexión falló:", err)
-    );
+    void (async () => {
+      try {
+        await bus.resubscribeAll();
+        await resyncOpenRooms();
+      } catch (err) {
+        console.error("[presence] resync tras reconexión falló:", err);
+      }
+    })();
   });
 }
 
@@ -679,6 +684,23 @@ if (presence) {
   presence.start().catch((err) =>
     console.error("[presence] start falló:", err)
   );
+}
+
+// Anti-entropy (Etapa 6): el broker puede cerrar conexiones idle sin aviso y
+// el cliente no re-suscribe solo: cada 60s se renuevan las suscripciones y se
+// re-sincroniza desde PG lo que haya pasado en el intervalo (merge
+// idempotente; el hueco de ms lo cubre el resync, no el bus at-most-once).
+if (bus.enabled) {
+  setInterval(() => {
+    void (async () => {
+      try {
+        await bus.resubscribeAll();
+        await resyncOpenRooms();
+      } catch (err) {
+        console.error("[bus] refresh anti-entropy falló:", err);
+      }
+    })();
+  }, 60_000);
 }
 
 Deno.serve({ port: PORT }, (req) => {

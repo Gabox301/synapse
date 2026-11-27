@@ -39,3 +39,28 @@ Deno.test("bus: ignora mensajes propios", async () => {
   await bus.close();
   assert(true);
 });
+
+Deno.test("bus: resubscribeAll mantiene el flujo sin duplicar", async () => {
+  const redisUrl = Deno.env.get("REDIS_URL");
+  if (!redisUrl) {
+    console.log("skip: sin REDIS_URL");
+    return;
+  }
+  const a = createBus({ instanceId: "r-a", redisUrl });
+  const b = createBus({ instanceId: "r-b", redisUrl });
+  const got: string[] = [];
+  const dec = new TextDecoder();
+  const enc = (s: string) => new TextEncoder().encode(s);
+  await b.ensureSubscribed("doc-resub", (msg) => {
+    got.push(dec.decode(msg.payload));
+  });
+  await a.publishUpdate("doc-resub", enc("uno"));
+  await new Promise((r) => setTimeout(r, 800));
+  await b.resubscribeAll();
+  await a.resubscribeAll();
+  await a.publishUpdate("doc-resub", enc("dos"));
+  await new Promise((r) => setTimeout(r, 800));
+  assertEquals(got, ["uno", "dos"]);
+  await a.close();
+  await b.close();
+});

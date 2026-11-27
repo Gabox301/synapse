@@ -30,6 +30,9 @@ export interface Bus {
   publishUpdate(documentId: string, payload: Uint8Array): Promise<void>;
   publishAwareness(documentId: string, payload: Uint8Array): Promise<void>;
   unsubscribe(documentId: string): Promise<void>;
+  /** Re-suscribe todos los canales activos (cura suscripciones muertas tras
+   * reconexión; los loops viejos se invalidan por generación). */
+  resubscribeAll(): Promise<void>;
   close(): void;
 }
 
@@ -81,6 +84,9 @@ interface SubEntry {
   channel: string;
   // deno-lint-ignore no-explicit-any
   sub: any;
+  /** Generación: un loop viejo (gen distinta a la vigente) se retira. */
+  gen: number;
+  onRemote: RemoteHandler;
 }
 
 function disabledBus(instanceId: string): Bus {
@@ -92,6 +98,7 @@ function disabledBus(instanceId: string): Bus {
     publishUpdate: noop,
     publishAwareness: noop,
     unsubscribe: noop,
+    resubscribeAll: noop,
     close: () => {},
   };
 }
@@ -123,37 +130,77 @@ export function createBus(opts: BusOptions = {}): Bus {
     await p.publish(channelFor(documentId), encodeBusMessage({ from: instanceId, kind, payload }));
   }
 
+  function startLoop(documentId: string, entry: SubEntry): void {
+    const sub = entry.sub;
+    (async () => {
+      try {
+        // deno-lint-ignore no-explicit-any
+        for await (const msg of (sub as any).receive()) {
+          if (subs.get(documentId) !== entry) break;
+          const raw = (msg as { message?: unknown }).message;
+          if (typeof raw !== "string") continue;
+          let decoded: BusMessage;
+          try {
+            decoded = decodeBusMessage(raw);
+          } catch {
+            continue;
+          }
+          if (decoded.from === instanceId) continue;
+          try {
+            entry.onRemote(decoded);
+          } catch (err) {
+            console.error(`[bus] handler ${documentId} falló:`, err);
+          }
+        }
+      } catch {
+        // Suscripción cerrada o conexión caída: se termina el loop.
+      }
+    })();
+  }
+
   return {
     instanceId,
     enabled: true,
     async ensureSubscribed(documentId: string, onRemote: RemoteHandler): Promise<void> {
-      if (closed || subs.has(documentId)) return;
+      if (closed) return;
+      const ex = subs.get(documentId);
+      if (ex?.sub) return;
+      const gen = (ex?.gen ?? -1) + 1;
+      if (ex) subs.delete(documentId);
       const channel = channelFor(documentId);
       const conn = await subConn();
       const sub = await conn.subscribe(channel);
-      subs.set(documentId, { channel, sub });
-      (async () => {
+      const entry: SubEntry = { channel, sub, gen, onRemote };
+      subs.set(documentId, entry);
+      startLoop(documentId, entry);
+    },
+    async resubscribeAll(): Promise<void> {
+      if (closed) return;
+      // Conexión nueva: la vieja (sana, muerta o a medio morir) se cierra y
+      // sus loops pendientes mueren; re-suscribir sobre la misma conexión no
+      // entrega en este cliente. El servidor olvida las subs al cerrar el TCP.
+      const stale = subClient;
+      subClient = null;
+      try {
+        stale?.close();
+      } catch { /* ya muerta */ }
+      for (const [documentId, old] of [...subs]) {
+        const entry: SubEntry = {
+          channel: old.channel,
+          sub: null,
+          gen: old.gen + 1,
+          onRemote: old.onRemote,
+        };
+        subs.set(documentId, entry);
         try {
-          for await (const msg of sub.receive()) {
-            const raw = (msg as { message?: unknown }).message;
-            if (typeof raw !== "string") continue;
-            let decoded: BusMessage;
-            try {
-              decoded = decodeBusMessage(raw);
-            } catch {
-              continue;
-            }
-            if (decoded.from === instanceId) continue;
-            try {
-              onRemote(decoded);
-            } catch (err) {
-              console.error(`[bus] handler ${documentId} falló:`, err);
-            }
-          }
-        } catch {
-          // Suscripción cerrada (unsubscribe/close): se termina el loop.
+          const conn = await subConn();
+          entry.sub = await conn.subscribe(entry.channel);
+        } catch (err) {
+          console.error(`[bus] resubscribe ${documentId} falló:`, err);
+          continue; // se reintenta en el próximo refresh/ensure
         }
-      })();
+        startLoop(documentId, entry);
+      }
     },
     publishUpdate: (documentId, payload) => publish(documentId, "update", payload),
     publishAwareness: (documentId, payload) => publish(documentId, "awareness", payload),
@@ -162,7 +209,7 @@ export function createBus(opts: BusOptions = {}): Bus {
       if (!entry) return;
       subs.delete(documentId);
       try {
-        await entry.sub.unsubscribe(entry.channel);
+        await entry.sub?.unsubscribe?.(entry.channel);
       } catch { /* ya cerrada */ }
     },
     close(): void {
