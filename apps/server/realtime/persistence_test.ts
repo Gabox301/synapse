@@ -5,11 +5,14 @@ import {
   closePool,
   compactBefore,
   ensureDocument,
+  listDocumentsForUser,
   loadDocument,
   saveBatch,
   saveSnapshot,
   withDocLock,
 } from "./persistence.ts";
+import { createUser } from "../auth/sessions.ts";
+import { addDocumentMember, createDocument } from "../auth/access.ts";
 
 const SKIP_MSG = "SKIP: sin postgres (docker compose up -d postgres)";
 let skipped = false;
@@ -125,3 +128,32 @@ function assertSeqs(actual: number[], expected: number[]): void {
     throw new Error(`seqs=${JSON.stringify(actual)}, esperaba ${JSON.stringify(expected)}`);
   }
 }
+
+Deno.test("persistence/list-mine", async (t) => {
+  if (!await pgUp()) {
+    console.log(SKIP_MSG);
+    return;
+  }
+
+  await t.step("lista solo docs visibles con rol", async () => {
+    const ts = Date.now();
+    const u1 = await createUser({ email: `mine-a-${ts}@x.test`, passwordHash: "x" });
+    const u2 = await createUser({ email: `mine-b-${ts}@x.test`, passwordHash: "x" });
+    const own = await createDocument({ title: "propio", createdBy: u1 });
+    const shared = await createDocument({ title: "compartido", createdBy: u2 });
+    await addDocumentMember(shared, u1, "editor");
+    const alien = await createDocument({ title: "ajeno", createdBy: u2 });
+    const mine = await listDocumentsForUser(u1);
+    const ids = mine.map((d) => d.id);
+    if (!ids.includes(own) || !ids.includes(shared)) {
+      throw new Error(`faltan propios: ${JSON.stringify(ids)}`);
+    }
+    if (ids.includes(alien)) throw new Error("doc ajeno listado");
+    const roles = Object.fromEntries(mine.map((d) => [d.id, d.role]));
+    if (roles[own] !== "owner" || roles[shared] !== "editor") {
+      throw new Error(`roles mal: ${JSON.stringify(roles)}`);
+    }
+  });
+
+  await closePool();
+});

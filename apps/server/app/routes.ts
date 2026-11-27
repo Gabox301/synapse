@@ -3,6 +3,8 @@ import { get, post, route } from "remix/routes";
 export const routes = route({
   home: get("/"),
   health: get("/api/health"),
+  loginPage: get("/login"),
+  documentsPage: get("/documents"),
   editDocument: get("/documents/:id"),
   createDocument: post("/api/documents"),
   wsTicket: post("/api/documents/:id/ws-ticket"),

@@ -253,3 +253,42 @@ export async function withDocLock<T>(
     client.release();
   }
 }
+
+export interface ListedDocument {
+  id: string;
+  title: string;
+  role: string;
+  updatedAt: string;
+}
+
+/**
+ * Documentos visibles para un usuario (miembro, creador o vía workspace),
+ * sin borrados, ordenados por actividad. El rol es el de miembro, `owner`
+ * si lo creó, o `viewer` si solo lo ve por workspace.
+ */
+export async function listDocumentsForUser(userId: string): Promise<ListedDocument[]> {
+  const { rows } = await getPool().query<{
+    id: string;
+    title: string;
+    role: string | null;
+    created_by: string | null;
+    updated_at: Date | string;
+  }>(
+    `SELECT d.id, d.title, m.role, d.created_by, d.updated_at
+     FROM documents d
+     LEFT JOIN document_members m
+       ON m.document_id = d.id AND m.user_id = $1
+     LEFT JOIN workspace_members w
+       ON w.workspace_id = d.workspace_id AND w.user_id = $1
+     WHERE d.deleted_at IS NULL
+       AND (m.user_id IS NOT NULL OR d.created_by = $1 OR w.user_id IS NOT NULL)
+     ORDER BY d.updated_at DESC`,
+    [userId],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    role: r.role ?? (r.created_by === userId ? "owner" : "viewer"),
+    updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
+  }));
+}

@@ -66,6 +66,18 @@ export function mountEditor(
   let editor: Editor | null = null;
   let destroyed = false;
 
+  function setConn(state: "on" | "off" | "err", text: string): void {
+    const el = document.getElementById("syn-conn");
+    if (!el) return;
+    el.setAttribute("data-state", state);
+    el.textContent = text;
+  }
+
+  function setSeq(seq: number): void {
+    const el = document.getElementById("syn-seq");
+    if (el) el.textContent = String(seq);
+  }
+
   const client = new SynapseClient({
     documentId: opts.docId,
     ticket: opts.ticket,
@@ -88,10 +100,19 @@ export function mountEditor(
         return;
       }
       mountTiptap();
+      setConn("on", "conectado");
+      setSeq(info.seq);
+    },
+    onAck: ({ seq }) => {
+      if (!destroyed) setSeq(seq);
+    },
+    onClose: () => {
+      if (!destroyed) setConn("off", "desconectado");
     },
   });
 
   function mountTiptap(): void {
+    container.replaceChildren();
     editor = new Editor({
       element: container,
       extensions: [

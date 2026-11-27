@@ -25,12 +25,6 @@ deno task test     # suite canónica (con check)
 deno task build-sdk  # paquete npm del SDK en ./npm/sdk (dry-run: npm publish --dry-run)
 ```
 
-## Estado
-
-Etapas 1–6 completas y verificadas (WebSocket core, CRDT, persistencia,
-presence+access, observabilidad, distribuido con Redis). Etapa 7
-(production ready) en curso: SDK + spec SNP v1 + tuning.
-
 ## Licencia
 
 MIT — ver [LICENSE](LICENSE).

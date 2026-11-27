@@ -4,6 +4,8 @@
     "dev": "deno run --no-check --allow-net --allow-read --allow-env --allow-ffi apps/server/server.ts",
     "migrate": "deno run --allow-net --allow-read --allow-env apps/server/db/migrate.ts",
     "test": "deno test --allow-net --allow-read --allow-env apps/server/realtime/ packages/protocol/ packages/sdk/ apps/server/db/",
-    "build-sdk": "deno run -A ./scripts/build-npm.ts"
+    "build-sdk": "deno run -A ./scripts/build-npm.ts",
+    "build:editor": "pnpm --filter @synapse/server run build:editor",
+    "dev": "pnpm --filter @synapse/server run build:editor && deno run --no-check --allow-net --allow-read --allow-env --allow-ffi apps/server/server.ts",
   }
 }
