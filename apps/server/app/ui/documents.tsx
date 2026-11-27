@@ -6,6 +6,11 @@ export function DocsShell(
   handle: Handle<{ email: string; docs: ListedDocument[]; error?: string }>,
 ) {
   const { email, docs, error } = handle.props;
+  const friendly: Record<string, string> = {
+    INVITE_INVALID: "Ese enlace de invitación ya no vale. Pedí uno nuevo.",
+    INTERNAL: "Algo falló. Probá de nuevo.",
+  };
+  const shownError = error ? friendly[error] ?? error : undefined;
   return () => (
     <html lang="es">
       <head>
@@ -25,7 +30,7 @@ export function DocsShell(
           </form>
         </header>
         <main class="syn-docs">
-          {error ? <p class="syn-error" role="alert">{error}</p> : null}
+          {shownError ? <p class="syn-error" role="alert">{shownError}</p> : null}
           <section class="syn-card">
             <h2>Nuevo documento</h2>
             <form method="post" action="/api/documents" class="syn-row">

@@ -5,6 +5,7 @@ import type {
   DocumentMember,
   ListedDocument,
 } from "../../realtime/persistence.ts";
+import type { ShareLinkMeta } from "../../auth/sharelinks.ts";
 
 const CURSOR_COLORS = [
   "#e6194b",
@@ -29,6 +30,7 @@ const MEMBER_ERRORS: Record<string, string> = {
   LAST_OWNER: "El documento necesita al menos un owner: transferí antes de salir.",
   INVALID_ROLE: "Rol inválido (owner, editor o viewer).",
   INVALID_BODY: "Revisá los datos del formulario.",
+  INVITE_INVALID: "Ese enlace ya no vale.",
 };
 
 function ago(iso: string): string {
@@ -63,10 +65,13 @@ export function DocumentShell(
     q: string;
     members: DocumentMember[];
     activity: DocActivity[];
+    origin: string;
     memberError?: string;
+    shareToken?: string;
+    shareLinks: ShareLinkMeta[];
   }>,
 ) {
-  const { docId, title, ticket, baseUrl, email, role, docs, q, members, activity, memberError } = handle.props;
+  const { docId, title, ticket, baseUrl, origin, email, role, docs, q, members, activity, memberError, shareToken, shareLinks } = handle.props;
   const mine = docs.filter((d) => d.mine);
   const shared = docs.filter((d) => !d.mine);
   const isOwner = role === "owner";
@@ -153,11 +158,37 @@ export function DocumentShell(
               {isOwner ? members.filter((m) => m.email !== email).map((m) => (
                 <form key={m.userId} method="post" action={`/api/documents/${docId}/members/remove`} class="syn-miniform">
                   <input type="hidden" name="userId" value={m.userId} />
-                  <span class="syn-note">{m.email}</span>
-                  <button type="submit" class="syn-danger">Quitar</button>
+                  <span className="syn-note">{m.email}</span>
+                  <button type="submit" className="syn-danger">Quitar</button>
                 </form>
               )) : null}
             </div>
+            {isOwner ? (
+              <div className="syn-sidesec">
+                <div className="syn-sidehead"><span>Enlaces de invitación</span></div>
+                {shareToken ? (
+                  <div className="syn-linkbox">
+                    <p className="syn-note">Link creado — compartilo (vale una vez visible acá):</p>
+                    <input type="text" readonly value={`${origin}/join/${shareToken}`} aria-label="Enlace de invitación" />
+                  </div>
+                ) : null}
+                <form method="post" action={`/api/documents/${docId}/share`} className="syn-miniform">
+                  <select name="role" aria-label="Rol del enlace" defaultValue="editor">
+                    <option value="editor">editor</option>
+                    <option value="viewer">viewer</option>
+                  </select>
+                  <input type="number" name="maxUses" defaultValue={10} min={1} aria-label="Usos máximos" />
+                  <button type="submit">Crear link</button>
+                </form>
+                {shareLinks.filter((l) => !l.revoked).map((l) => (
+                  <form key={l.id} method="post" action={`/api/documents/${docId}/share/revoke`} className="syn-miniform">
+                    <input type="hidden" name="linkId" value={l.id} />
+                    <span className="syn-note">{l.role} · {l.usedCount}/{l.maxUses ?? "∞"} usos · vence {l.expiresAt.slice(0, 10)}</span>
+                    <button type="submit" className="syn-danger">Revocar</button>
+                  </form>
+                ))}
+              </div>
+            ) : null}
           </aside>
           <div class="syn-main">
             <div class="syn-tabs" role="tablist">

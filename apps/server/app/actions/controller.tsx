@@ -15,8 +15,10 @@ import {
 } from "../../auth/sessions.ts";
 import { issueTicket } from "../../auth/tickets.ts";
 import { createDocument, removeMemberGuarded, resolveRole, setMemberRole } from "../../auth/access.ts";
+import { createShareLink, joinViaLink, listShareLinks, peekShareLink, revokeShareLink } from "../../auth/sharelinks.ts";
 import { assets } from "../assets.ts";
 import { DocumentShell } from "../ui/document.tsx";
+import { JoinShell } from "../ui/join.tsx";
 import { LoginShell } from "../ui/login.tsx";
 import { DocsShell } from "../ui/documents.tsx";
 import { listDocumentMembers, listDocumentsForUser, recentActivity } from "../../realtime/persistence.ts";
@@ -60,24 +62,41 @@ function loginRedirect(code: string, email: string): Response {
   return redirect(`/login?${q}`);
 }
 
+/** Une al usuario vía link de invitación (null si no hay o ya no vale). */
+async function joinWithInvite(
+  invite: string | undefined,
+  userId: string,
+): Promise<{ documentId: string; role: string } | null> {
+  if (!invite) return null;
+  try {
+    return await joinViaLink(invite, userId);
+  } catch {
+    return null;
+  }
+}
+
 // Login/registro: 5 intentos + 1/min por IP (ver AUTH_LIMIT).
 const authLimiter = new RateLimiter(AUTH_LIMIT);
 
 async function readCredentials(
   req: Request,
-): Promise<{ email: string; password: string } | Response> {
+): Promise<{ email: string; password: string; invite?: string } | Response> {
   let email = "";
   let password = "";
+  let invite: string | undefined;
   try {
     const ct = req.headers.get("content-type") ?? "";
     if (ct.includes("application/json")) {
-      const body = await req.json() as { email?: unknown; password?: unknown };
+      const body = await req.json() as { email?: unknown; password?: unknown; invite?: unknown };
       email = String(body.email ?? "");
       password = String(body.password ?? "");
+      if (typeof body.invite === "string" && body.invite) invite = body.invite;
     } else {
       const form = await req.formData();
       email = String(form.get("email") ?? "");
       password = String(form.get("password") ?? "");
+      const inv = form.get("invite");
+      if (typeof inv === "string" && inv) invite = inv;
     }
   } catch {
     return Response.json({ error: "INVALID_BODY" }, { status: 400 });
@@ -86,7 +105,7 @@ async function readCredentials(
   if (!email.includes("@") || password.length === 0) {
     return Response.json({ error: "INVALID_CREDENTIALS" }, { status: 400 });
   }
-  return { email, password };
+  return { email, password, invite };
 }
 
 export default createController(routes, {
@@ -157,8 +176,13 @@ export default createController(routes, {
       const { token } = await createSession(id);
       const url = new URL(context.request.url);
       const cookie = sessionCookie(token, url);
-      if (form) return redirect("/documents", { "Set-Cookie": cookie });
-      return Response.json({ id, email: creds.email }, {
+      const joined = await joinWithInvite(creds.invite, id);
+      if (form) {
+        if (joined) return redirect(`/documents/${joined.documentId}`, { "Set-Cookie": cookie });
+        if (creds.invite) return redirect("/documents?error=INVITE_INVALID", { "Set-Cookie": cookie });
+        return redirect("/documents", { "Set-Cookie": cookie });
+      }
+      return Response.json({ id, email: creds.email, joined }, {
         status: 201,
         headers: { "Set-Cookie": cookie },
       });
@@ -182,8 +206,13 @@ export default createController(routes, {
       const { token } = await createSession(user.id);
       const url = new URL(context.request.url);
       const cookie = sessionCookie(token, url);
-      if (form) return redirect("/documents", { "Set-Cookie": cookie });
-      return Response.json({ id: user.id, email: creds.email }, {
+      const joined = await joinWithInvite(creds.invite, user.id);
+      if (form) {
+        if (joined) return redirect(`/documents/${joined.documentId}`, { "Set-Cookie": cookie });
+        if (creds.invite) return redirect("/documents?error=INVITE_INVALID", { "Set-Cookie": cookie });
+        return redirect("/documents", { "Set-Cookie": cookie });
+      }
+      return Response.json({ id: user.id, email: creds.email, joined }, {
         headers: { "Set-Cookie": cookie },
       });
     },
@@ -331,6 +360,112 @@ export default createController(routes, {
       if (form) return back();
       return Response.json({ ok: true, userId });
     },
+    async shareCreate(context) {
+      const form = !wantsJson(context.request);
+      const back = (code?: string) => {
+        const id: string = context.params.id;
+        return code ? redirect(`/documents/${id}?error=${code}`) : redirect(`/documents/${id}`);
+      };
+      const token = getSessionToken(context.request);
+      const session = token ? await validateSession(token).catch(() => null) : null;
+      if (!session) {
+        if (form) return redirect("/login");
+        return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+      }
+      const documentId: string = context.params.id;
+      let role = "editor";
+      let maxUses: number | null = 10;
+      let expiresInHours = 168;
+      try {
+        const ct = context.request.headers.get("content-type") ?? "";
+        if (ct.includes("application/json")) {
+          const body = await context.request.json() as { role?: unknown; maxUses?: unknown; expiresInHours?: unknown };
+          if (body.role !== undefined) role = String(body.role);
+          if (body.maxUses !== undefined) maxUses = body.maxUses === null ? null : Number(body.maxUses);
+          if (body.expiresInHours !== undefined) expiresInHours = Number(body.expiresInHours);
+        } else {
+          const f = await context.request.formData();
+          role = String(f.get("role") ?? "editor");
+          maxUses = f.get("maxUses") === null || f.get("maxUses") === "" ? 10 : Number(f.get("maxUses"));
+          expiresInHours = f.get("expiresInHours") === null || f.get("expiresInHours") === "" ? 168 : Number(f.get("expiresInHours"));
+        }
+      } catch {
+        if (form) return back("INVALID_BODY");
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      if (!Number.isFinite(expiresInHours) || expiresInHours <= 0 || expiresInHours > 24 * 90) {
+        if (form) return back("INVALID_BODY");
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      if (maxUses !== null && (!Number.isInteger(maxUses) || maxUses <= 0)) {
+        if (form) return back("INVALID_BODY");
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      try {
+        const link = await createShareLink(documentId, session.userId, { role, maxUses, expiresInHours });
+        const url = `/join/${link.token}`;
+        if (form) return redirect(`/documents/${documentId}?share=${link.token}`);
+        return Response.json({ ok: true, id: link.id, url });
+      } catch (err) {
+        const code = String((err as Error).message).split(":")[0];
+        const status = code === "FORBIDDEN" ? 403 : 400;
+        if (form) return back(code);
+        return Response.json({ error: code }, { status });
+      }
+    },
+    async shareRevoke(context) {
+      const form = !wantsJson(context.request);
+      const back = (code?: string) => {
+        const id: string = context.params.id;
+        return code ? redirect(`/documents/${id}?error=${code}`) : redirect(`/documents/${id}`);
+      };
+      const token = getSessionToken(context.request);
+      const session = token ? await validateSession(token).catch(() => null) : null;
+      if (!session) {
+        if (form) return redirect("/login");
+        return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+      }
+      const documentId: string = context.params.id;
+      let linkId = "";
+      try {
+        const ct = context.request.headers.get("content-type") ?? "";
+        if (ct.includes("application/json")) {
+          const body = await context.request.json() as { linkId?: unknown };
+          linkId = String(body.linkId ?? "");
+        } else {
+          const f = await context.request.formData();
+          linkId = String(f.get("linkId") ?? "");
+        }
+      } catch {
+        if (form) return back("INVALID_BODY");
+        return Response.json({ error: "INVALID_BODY" }, { status: 400 });
+      }
+      try {
+        await revokeShareLink(documentId, linkId, session.userId);
+      } catch (err) {
+        const code = String((err as Error).message).split(":")[0];
+        const status = code === "FORBIDDEN" ? 403 : 400;
+        if (form) return back(code);
+        return Response.json({ error: code }, { status });
+      }
+      if (form) return back();
+      return Response.json({ ok: true, linkId });
+    },
+    async joinPage(context) {
+      const token: string = context.params.token;
+      const peek = await peekShareLink(token).catch(() => null);
+      const sessionToken = getSessionToken(context.request);
+      const session = sessionToken ? await validateSession(sessionToken).catch(() => null) : null;
+      if (session) {
+        if (!peek || !peek.valid) return redirect("/documents?error=INVITE_INVALID");
+        const joined = await joinViaLink(token, session.userId).catch(() => null);
+        if (!joined) return redirect("/documents?error=INVITE_INVALID");
+        return redirect(`/documents/${joined.documentId}`);
+      }
+      return context.render(
+        <JoinShell token={token} peek={peek} />,
+      );
+    },
     async editDocument(context) {
       // Etapa 4: requiere sesión y acceso; el ticket es real y de un solo uso.
       const token = getSessionToken(context.request);
@@ -351,17 +486,23 @@ export default createController(routes, {
       const members = await listDocumentMembers(documentId).catch(() => []);
       const activity = await recentActivity(documentId, 8).catch(() => []);
       const title = allDocs.find((d) => d.id === documentId)?.title || documentId;
-      const memberError = new URL(context.request.url).searchParams.get("error") ?? undefined;
+      const url2 = new URL(context.request.url);
+      const memberError = url2.searchParams.get("error") ?? undefined;
+      const shareToken = url2.searchParams.get("share") ?? undefined;
+      const shareLinks = authRole === "owner" ? await listShareLinks(documentId, session.userId).catch(() => []) : [];
       return context.render(
         <DocumentShell
           docId={documentId}
           title={title}
           ticket={issued.ticket}
           baseUrl={baseUrl}
+          origin={url2.origin}
           email={user?.email ?? ""}
           role={authRole}
           docs={docs}
           memberError={memberError}
+          shareToken={shareToken}
+          shareLinks={shareLinks}
           q={q}
           members={members}
           activity={activity}
