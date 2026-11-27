@@ -70,11 +70,35 @@ function setup() {
   return { t, events, client };
 }
 
-function stormTest(name: string, fn: () => void | Promise<void>): void {
-  Deno.test({ name, sanitizeOps: false, sanitizeResources: false, fn });
-}
+Deno.test("close libera el intervalo de Awareness (pasa con sanitizers)", () => {
+  const { t, client } = setup();
+  client.connect();
+  t.emitOpen();
+  t.emitMessage(JOINED);
+  client.doc.getText("t").insert(0, "x");
+  client.close();
+});
 
-stormTest("storm de frames inválidos no tumba la conexión ni el doc", () => {
+Deno.test("reconnect tras close recrea Awareness y sigue sincronizando presencia", async () => {
+  const { t, client } = setup();
+  client.connect();
+  t.emitOpen();
+  t.emitMessage(JOINED);
+  client.close();
+  const p = client.reconnect();
+  t.emitOpen();
+  t.emitMessage(JOINED);
+  await p;
+  const before = t.sent.length;
+  client.setPresence({ cursor: 3 });
+  const frames =
+    (t.sent.slice(before).filter((m) => typeof m !== "string") as Uint8Array[])
+      .filter((m) => m[0] === 0x04);
+  assertEquals(frames.length, 1);
+  client.close();
+});
+
+Deno.test("storm de frames inválidos no tumba la conexión ni el doc", () => {
   const { t, events, client } = setup();
   client.connect();
   t.emitOpen();
@@ -114,9 +138,10 @@ stormTest("storm de frames inválidos no tumba la conexión ni el doc", () => {
   t.emitMessage(frame(0x02, Y.encodeStateAsUpdate(other)));
   const text = client.doc.getText("t").toString();
   assert(text.includes("base") && text.includes("ok"), text);
+  client.close();
 });
 
-stormTest("update local gigante no revienta el editor", () => {
+Deno.test("update local gigante no revienta el editor", () => {
   const { t, events, client } = setup();
   client.connect();
   t.emitOpen();
@@ -142,4 +167,5 @@ stormTest("update local gigante no revienta el editor", () => {
     1,
   );
   assertEquals(client.pendingCount, 1);
+  client.close();
 });

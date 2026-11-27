@@ -65,7 +65,8 @@ export interface SynapseClientOptions {
 
 export class SynapseClient {
   readonly doc = new Y.Doc();
-  readonly awareness: Awareness;
+  private _awareness: Awareness;
+  private awarenessDestroyed = false;
   private readonly opts:
     & Required<
       Omit<
@@ -112,14 +113,23 @@ export class SynapseClient {
       storageThrottleMs: 1000,
       ...opts,
     };
-    this.awareness = new Awareness(this.doc);
+    this._awareness = new Awareness(this.doc);
+    this.wireAwareness();
     this.doc.on("update", (update: Uint8Array, origin: unknown) => {
       if (origin !== REMOTE_ORIGIN && !this.closed) {
         this.sendUpdate(update);
         this.maybeSaveStorage();
       }
     });
-    this.awareness.on("update", (_: unknown, origin: unknown) => {
+  }
+
+  /** Instancia vigente (se recrea en reconnect tras un close). */
+  get awareness(): Awareness {
+    return this._awareness;
+  }
+
+  private wireAwareness(): void {
+    this._awareness.on("update", (_: unknown, origin: unknown) => {
       if (origin !== REMOTE_ORIGIN) this.maybeSendAwareness();
     });
   }
@@ -204,6 +214,11 @@ export class SynapseClient {
     this.isOpen = false;
     if (ticket) this.opts.ticket = ticket;
     this.closed = false;
+    if (this.awarenessDestroyed) {
+      this._awareness = new Awareness(this.doc);
+      this.wireAwareness();
+      this.awarenessDestroyed = false;
+    }
     return this.connect();
   }
 
@@ -225,6 +240,12 @@ export class SynapseClient {
     this.isOpen = false;
     this.transport?.close(code);
     this.transport = null;
+    // Higiene (Etapa 5): el intervalo propio de Awareness muere con el
+    // cliente; si no, cada cliente abandonado pineaba su Y.Doc para siempre.
+    if (!this.awarenessDestroyed) {
+      this.awarenessDestroyed = true;
+      this._awareness.destroy();
+    }
     // Un close intencional cancela un join pendiente.
     this.joinedReject?.(new Error("CONNECTION_CLOSED"));
     this.joinedResolve = null;
