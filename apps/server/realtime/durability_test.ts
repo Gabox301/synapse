@@ -2,13 +2,13 @@
 // Requieren PG arriba; sin PG se saltean con aviso.
 import * as Y from "yjs";
 import { hasDoc, resetStore } from "./documents.ts";
-import { loadDocument } from "./persistence.ts";
+import { getPool, loadDocument } from "./persistence.ts";
 import { listSnapshots } from "./persistence.ts";
 import {
   createNamedSnapshot,
   enforceRetention,
-  ensureLoaded,
   enqueueUpdate,
+  ensureLoaded,
   evictIfEmpty,
   flushDocument,
   persistedSeq,
@@ -79,12 +79,18 @@ Deno.test({
       await flushDocument(id);
       const a1 = lastAck(c1);
       const a2 = lastAck(c2);
-      if (!a1 || a1.upTo !== 1) throw new Error("ack c1 mal: " + JSON.stringify(a1));
-      if (!a2 || a2.upTo !== 2) throw new Error("ack c2 mal: " + JSON.stringify(a2));
+      if (!a1 || a1.upTo !== 1) {
+        throw new Error("ack c1 mal: " + JSON.stringify(a1));
+      }
+      if (!a2 || a2.upTo !== 2) {
+        throw new Error("ack c2 mal: " + JSON.stringify(a2));
+      }
       if (a1.seq !== 2 || a2.seq !== 2) throw new Error("seq final != 2");
       if (persistedSeq(id) !== 2) throw new Error("persistedSeq != 2");
       const loaded = await loadDocument(id);
-      if (!loaded || loaded.updates.length !== 2) throw new Error("DB sin 2 updates");
+      if (!loaded || loaded.updates.length !== 2) {
+        throw new Error("DB sin 2 updates");
+      }
     });
 
     await t.step("ensureLoaded trae snapshot+tail a memoria", async () => {
@@ -93,12 +99,19 @@ Deno.test({
       const id = freshId("t3-load");
       const doc = new Y.Doc();
       doc.getText("t").insert(0, "hola");
-      enqueueUpdate(id, mockConn() as unknown as WebSocket, 1, Y.encodeStateAsUpdate(doc));
+      enqueueUpdate(
+        id,
+        mockConn() as unknown as WebSocket,
+        1,
+        Y.encodeStateAsUpdate(doc),
+      );
       await flushDocument(id);
       resetStore();
       const { doc: mem, seq } = await ensureLoaded(id);
       if (seq !== 1) throw new Error(`seq=${seq}, esperaba 1`);
-      if (mem.getText("t").toString() !== "hola") throw new Error("memoria no convergió");
+      if (mem.getText("t").toString() !== "hola") {
+        throw new Error("memoria no convergió");
+      }
       if (!hasDoc(id)) throw new Error("doc no quedó en memoria");
     });
 
@@ -111,7 +124,12 @@ Deno.test({
         const c = mockConn();
         const doc = new Y.Doc();
         doc.getText("t").insert(0, "x");
-        enqueueUpdate(id, c as unknown as WebSocket, 1, Y.encodeStateAsUpdate(doc));
+        enqueueUpdate(
+          id,
+          c as unknown as WebSocket,
+          1,
+          Y.encodeStateAsUpdate(doc),
+        );
         await new Promise((r) => setTimeout(r, 300));
         if (persistedSeq(id) !== 1) throw new Error("no hubo auto-flush");
         if (!lastAck(c)) throw new Error("sin ack tras auto-flush");
@@ -120,23 +138,33 @@ Deno.test({
       }
     });
 
-    await t.step("evictIfEmpty persiste pendientes y libera memoria", async () => {
-      resetStore();
-      resetDurability();
-      const id = freshId("t3-evict");
-      await ensureLoaded(id);
-      const doc = new Y.Doc();
-      doc.getText("t").insert(0, "z");
-      enqueueUpdate(id, mockConn() as unknown as WebSocket, 1, Y.encodeStateAsUpdate(doc));
-      const room = new Set<WebSocket>();
-      const evicted = await evictIfEmpty(id, room);
-      if (!evicted) throw new Error("debió evictar con room vacía");
-      if (hasDoc(id)) throw new Error("sigue en memoria");
-      const loaded = await loadDocument(id);
-      if (!loaded || loaded.updates.length !== 1) throw new Error("no persistió al evictar");
-      const kept = await evictIfEmpty(id, new Set([{} as WebSocket]));
-      if (kept) throw new Error("evictó con room ocupada");
-    });
+    await t.step(
+      "evictIfEmpty persiste pendientes y libera memoria",
+      async () => {
+        resetStore();
+        resetDurability();
+        const id = freshId("t3-evict");
+        await ensureLoaded(id);
+        const doc = new Y.Doc();
+        doc.getText("t").insert(0, "z");
+        enqueueUpdate(
+          id,
+          mockConn() as unknown as WebSocket,
+          1,
+          Y.encodeStateAsUpdate(doc),
+        );
+        const room = new Set<WebSocket>();
+        const evicted = await evictIfEmpty(id, room);
+        if (!evicted) throw new Error("debió evictar con room vacía");
+        if (hasDoc(id)) throw new Error("sigue en memoria");
+        const loaded = await loadDocument(id);
+        if (!loaded || loaded.updates.length !== 1) {
+          throw new Error("no persistió al evictar");
+        }
+        const kept = await evictIfEmpty(id, new Set([{} as WebSocket]));
+        if (kept) throw new Error("evictó con room ocupada");
+      },
+    );
 
     resetDurability();
   },
@@ -161,13 +189,22 @@ Deno.test({
         const doc = new Y.Doc();
         for (let i = 0; i < 3; i++) {
           doc.getText("t").insert(i, String(i));
-          enqueueUpdate(id, mockConn() as unknown as WebSocket, i + 1, Y.encodeStateAsUpdate(doc));
+          enqueueUpdate(
+            id,
+            mockConn() as unknown as WebSocket,
+            i + 1,
+            Y.encodeStateAsUpdate(doc),
+          );
         }
         await flushDocument(id);
         const snaps = await listSnapshots(id);
         const auto = snaps.filter((s) => s.kind === "auto");
-        if (auto.length !== 1) throw new Error(`esperaba 1 auto, hay ${auto.length}`);
-        if (auto[0].lastSeq !== 3) throw new Error(`lastSeq=${auto[0].lastSeq}, esperaba 3`);
+        if (auto.length !== 1) {
+          throw new Error(`esperaba 1 auto, hay ${auto.length}`);
+        }
+        if (auto[0].lastSeq !== 3) {
+          throw new Error(`lastSeq=${auto[0].lastSeq}, esperaba 3`);
+        }
       } finally {
         setAutoSnapshotEvery(100);
       }
@@ -182,16 +219,28 @@ Deno.test({
         return doc;
       })();
       doc.getText("t").insert(0, "hello");
-      enqueueUpdate(id, mockConn() as unknown as WebSocket, 1, Y.encodeStateAsUpdate(doc));
+      enqueueUpdate(
+        id,
+        mockConn() as unknown as WebSocket,
+        1,
+        Y.encodeStateAsUpdate(doc),
+      );
       await flushDocument(id);
       const v1 = await createNamedSnapshot(id, "v1");
       doc.getText("t").insert(5, " world");
-      enqueueUpdate(id, mockConn() as unknown as WebSocket, 2, Y.encodeStateAsUpdate(doc));
+      enqueueUpdate(
+        id,
+        mockConn() as unknown as WebSocket,
+        2,
+        Y.encodeStateAsUpdate(doc),
+      );
       await flushDocument(id);
       const { restoreSeq } = await restoreSnapshot(id, v1, {
         roots: [{ name: "t", kind: "text" }],
       });
-      if (restoreSeq <= 2) throw new Error(`restoreSeq=${restoreSeq}, esperaba > 2`);
+      if (restoreSeq <= 2) {
+        throw new Error(`restoreSeq=${restoreSeq}, esperaba > 2`);
+      }
       if (doc.getText("t").toString() !== "hello") {
         throw new Error("no revirtió: " + doc.getText("t").toString());
       }
@@ -202,7 +251,9 @@ Deno.test({
       if (reloaded.snapshot) Y.applyUpdate(replica, reloaded.snapshot.state);
       for (const u of reloaded.updates) Y.applyUpdate(replica, u);
       if (replica.getText("t").toString() !== "hello") {
-        throw new Error("reload no converge a hello: " + replica.getText("t").toString());
+        throw new Error(
+          "reload no converge a hello: " + replica.getText("t").toString(),
+        );
       }
       const snaps = await listSnapshots(id);
       if (!snaps.some((s) => s.kind === "named" && s.label === "v1")) {
@@ -213,89 +264,228 @@ Deno.test({
       }
     });
 
-    await t.step("restore funciona con XmlFragment (forma del editor)", async () => {
-      resetStore();
-      resetDurability();
-      const id = freshId("t4-xml");
-      const { doc } = await ensureLoaded(id);
-      const frag = doc.getXmlFragment("prosemirror");
-      frag.insert(0, [new Y.XmlText("hi")]);
-      enqueueUpdate(id, mockConn() as unknown as WebSocket, 1, Y.encodeStateAsUpdate(doc));
-      await flushDocument(id);
-      const v1 = await createNamedSnapshot(id, "v1");
-      frag.insert(1, [new Y.XmlText(" there")]);
-      enqueueUpdate(id, mockConn() as unknown as WebSocket, 2, Y.encodeStateAsUpdate(doc));
-      await flushDocument(id);
-      await restoreSnapshot(id, v1, { roots: [{ name: "prosemirror", kind: "xmlfragment" }] });
-      const json = JSON.stringify(doc.getXmlFragment("prosemirror").toJSON());
-      if (!json.includes("hi") || json.includes("there")) {
-        throw new Error("restore xml incorrecto: " + json);
-      }
-    });
+    await t.step(
+      "restore funciona con XmlFragment (forma del editor)",
+      async () => {
+        resetStore();
+        resetDurability();
+        const id = freshId("t4-xml");
+        const { doc } = await ensureLoaded(id);
+        const frag = doc.getXmlFragment("prosemirror");
+        frag.insert(0, [new Y.XmlText("hi")]);
+        enqueueUpdate(
+          id,
+          mockConn() as unknown as WebSocket,
+          1,
+          Y.encodeStateAsUpdate(doc),
+        );
+        await flushDocument(id);
+        const v1 = await createNamedSnapshot(id, "v1");
+        frag.insert(1, [new Y.XmlText(" there")]);
+        enqueueUpdate(
+          id,
+          mockConn() as unknown as WebSocket,
+          2,
+          Y.encodeStateAsUpdate(doc),
+        );
+        await flushDocument(id);
+        await restoreSnapshot(id, v1, {
+          roots: [{ name: "prosemirror", kind: "xmlfragment" }],
+        });
+        const json = JSON.stringify(doc.getXmlFragment("prosemirror").toJSON());
+        if (!json.includes("hi") || json.includes("there")) {
+          throw new Error("restore xml incorrecto: " + json);
+        }
+      },
+    );
 
-    await t.step("crash pierde lo no confirmado; resync del cliente lo recupera", async () => {
-      resetStore();
-      resetDurability();
-      const id = freshId("t5-crash");
-      const doc = new Y.Doc();
-      doc.getText("t").insert(0, "x");
-      const clientCopy = Y.encodeStateAsUpdate(doc);
-      const mock = mockConn();
-      enqueueUpdate(id, mock as unknown as WebSocket, 1, clientCopy);
-      // Crash: se pierde la memoria SIN hacer flush (nada confirmado).
-      resetStore();
-      resetDurability();
-      const reloaded = await loadDocument(id);
-      if (reloaded && (reloaded.updates.length > 0 || reloaded.snapshot)) {
-        throw new Error("lo no confirmado debió perderse");
-      }
-      // Resync: el cliente reenvía su copia y converge.
-      enqueueUpdate(id, mock as unknown as WebSocket, 1, clientCopy);
-      await flushDocument(id);
-      const { doc: final } = await ensureLoaded(id);
-      if (final.getText("t").toString() !== "x") throw new Error("resync no convergió");
-    });
+    await t.step(
+      "crash pierde lo no confirmado; resync del cliente lo recupera",
+      async () => {
+        resetStore();
+        resetDurability();
+        const id = freshId("t5-crash");
+        const doc = new Y.Doc();
+        doc.getText("t").insert(0, "x");
+        const clientCopy = Y.encodeStateAsUpdate(doc);
+        const mock = mockConn();
+        enqueueUpdate(id, mock as unknown as WebSocket, 1, clientCopy);
+        // Crash: se pierde la memoria SIN hacer flush (nada confirmado).
+        resetStore();
+        resetDurability();
+        const reloaded = await loadDocument(id);
+        if (reloaded && (reloaded.updates.length > 0 || reloaded.snapshot)) {
+          throw new Error("lo no confirmado debió perderse");
+        }
+        // Resync: el cliente reenvía su copia y converge.
+        enqueueUpdate(id, mock as unknown as WebSocket, 1, clientCopy);
+        await flushDocument(id);
+        const { doc: final } = await ensureLoaded(id);
+        if (final.getText("t").toString() !== "x") {
+          throw new Error("resync no convergió");
+        }
+      },
+    );
 
-    await t.step("enforceRetention recorta con snapshot y ventana", async () => {
+    await t.step(
+      "enforceRetention recorta con snapshot y ventana",
+      async () => {
+        resetStore();
+        resetDurability();
+        const id = freshId("t4-ret");
+        const doc = new Y.Doc();
+        const expected: string[] = [];
+        for (let i = 0; i < 5; i++) {
+          doc.getText("t").insert(i, String(i));
+          expected.push(String(i));
+          enqueueUpdate(
+            id,
+            mockConn() as unknown as WebSocket,
+            i + 1,
+            Y.encodeStateAsUpdate(doc),
+          );
+        }
+        await flushDocument(id);
+        const want = expected.join("");
+        // Sin snapshot previo: lo crea para dar cobertura y recorta a la ventana.
+        const deleted = await enforceRetention(id, 2);
+        if (deleted !== 3) throw new Error(`deleted=${deleted}, esperaba 3`);
+        resetStore();
+        const reloaded = await loadDocument(id);
+        if (!reloaded) throw new Error("doc perdido tras compact");
+        const replica = new Y.Doc();
+        if (reloaded.snapshot) Y.applyUpdate(replica, reloaded.snapshot.state);
+        for (const u of reloaded.updates) Y.applyUpdate(replica, u);
+        if (replica.getText("t").toString() !== want) {
+          throw new Error(
+            "reload no converge tras compact: " +
+              replica.getText("t").toString(),
+          );
+        }
+        // Con snapshot + keep amplio: no borra nada.
+        await createNamedSnapshot(id, "full");
+        const deleted2 = await enforceRetention(id, 10);
+        if (deleted2 !== 0) throw new Error(`deleted=${deleted2}, esperaba 0`);
+        // Con keep chico: conserva solo el último update.
+        const deleted3 = await enforceRetention(id, 1);
+        if (deleted3 !== 1) throw new Error(`deleted=${deleted3}, esperaba 1`);
+        resetStore();
+        const reloaded2 = await loadDocument(id);
+        if (!reloaded2) throw new Error("doc perdido");
+        const replica2 = new Y.Doc();
+        if (reloaded2.snapshot) {
+          Y.applyUpdate(replica2, reloaded2.snapshot.state);
+        }
+        for (const u of reloaded2.updates) {
+          Y.applyUpdate(replica2, u);
+        }
+        if (replica2.getText("t").toString() !== want) {
+          throw new Error("reload no converge tras 2do compact");
+        }
+      },
+    );
+
+    resetDurability();
+  },
+});
+
+Deno.test({
+  name: "durability/schema-guard/**",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn(t) {
+    if (!await pgUp()) {
+      console.log("SKIP: sin postgres (docker compose up -d postgres)");
+      return;
+    }
+
+    await t.step(
+      "schema_version 2 rechaza la carga sin dejar nada en memoria",
+      async () => {
+        resetStore();
+        resetDurability();
+        const id = freshId("t5-schema2");
+        const doc = new Y.Doc();
+        doc.getText("t").insert(0, "v1");
+        enqueueUpdate(
+          id,
+          mockConn() as unknown as WebSocket,
+          1,
+          Y.encodeStateAsUpdate(doc),
+        );
+        await flushDocument(id);
+        await getPool().query(
+          "UPDATE documents SET schema_version = 2 WHERE id = $1",
+          [id],
+        );
+        const stored = await loadDocument(id);
+        if (!stored || stored.schemaVersion !== 2) {
+          throw new Error(
+            "loadDocument no devuelve schema 2: " +
+              JSON.stringify(stored?.schemaVersion),
+          );
+        }
+        resetStore();
+        resetDurability();
+        let err: unknown = null;
+        try {
+          await ensureLoaded(id);
+        } catch (e) {
+          err = e;
+        }
+        if (
+          !(err instanceof Error) ||
+          !err.message.startsWith("SCHEMA_UNSUPPORTED")
+        ) {
+          throw new Error(
+            "debió rechazar con SCHEMA_UNSUPPORTED: " + String(err),
+          );
+        }
+        if (!err.message.includes("v2") || !err.message.includes("v1")) {
+          throw new Error(
+            "el error debe citar ambas versiones: " + err.message,
+          );
+        }
+        if (hasDoc(id)) throw new Error("el doc rechazado quedó en memoria");
+        // Sin caché envenenada: el segundo intento rechaza igual.
+        let err2: unknown = null;
+        try {
+          await ensureLoaded(id);
+        } catch (e) {
+          err2 = e;
+        }
+        if (
+          !(err2 instanceof Error) ||
+          !err2.message.startsWith("SCHEMA_UNSUPPORTED")
+        ) {
+          throw new Error("segundo intento no rechazó: " + String(err2));
+        }
+        if (hasDoc(id)) {
+          throw new Error("el doc rechazado quedó en memoria (2do intento)");
+        }
+      },
+    );
+
+    await t.step("schema_version 1 carga normal", async () => {
       resetStore();
       resetDurability();
-      const id = freshId("t4-ret");
+      const id = freshId("t5-schema1");
       const doc = new Y.Doc();
-      const expected: string[] = [];
-      for (let i = 0; i < 5; i++) {
-        doc.getText("t").insert(i, String(i));
-        expected.push(String(i));
-        enqueueUpdate(id, mockConn() as unknown as WebSocket, i + 1, Y.encodeStateAsUpdate(doc));
-      }
+      doc.getText("t").insert(0, "ok");
+      enqueueUpdate(
+        id,
+        mockConn() as unknown as WebSocket,
+        1,
+        Y.encodeStateAsUpdate(doc),
+      );
       await flushDocument(id);
-      const want = expected.join("");
-      // Sin snapshot previo: lo crea para dar cobertura y recorta a la ventana.
-      const deleted = await enforceRetention(id, 2);
-      if (deleted !== 3) throw new Error(`deleted=${deleted}, esperaba 3`);
       resetStore();
-      const reloaded = await loadDocument(id);
-      if (!reloaded) throw new Error("doc perdido tras compact");
-      const replica = new Y.Doc();
-      if (reloaded.snapshot) Y.applyUpdate(replica, reloaded.snapshot.state);
-      for (const u of reloaded.updates) Y.applyUpdate(replica, u);
-      if (replica.getText("t").toString() !== want) {
-        throw new Error("reload no converge tras compact: " + replica.getText("t").toString());
+      const loaded = await ensureLoaded(id);
+      if (loaded.schemaVersion !== 1) {
+        throw new Error(`schemaVersion=${loaded.schemaVersion}, esperaba 1`);
       }
-      // Con snapshot + keep amplio: no borra nada.
-      await createNamedSnapshot(id, "full");
-      const deleted2 = await enforceRetention(id, 10);
-      if (deleted2 !== 0) throw new Error(`deleted=${deleted2}, esperaba 0`);
-      // Con keep chico: conserva solo el último update.
-      const deleted3 = await enforceRetention(id, 1);
-      if (deleted3 !== 1) throw new Error(`deleted=${deleted3}, esperaba 1`);
-      resetStore();
-      const reloaded2 = await loadDocument(id);
-      if (!reloaded2) throw new Error("doc perdido");
-      const replica2 = new Y.Doc();
-      if (reloaded2.snapshot) Y.applyUpdate(replica2, reloaded2.snapshot.state);
-      for (const u of reloaded2.updates) Y.applyUpdate(replica2, u);
-      if (replica2.getText("t").toString() !== want) {
-        throw new Error("reload no converge tras 2do compact");
+      if (loaded.doc.getText("t").toString() !== "ok") {
+        throw new Error("contenido no cargó");
       }
     });
 
