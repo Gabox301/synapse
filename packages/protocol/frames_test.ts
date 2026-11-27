@@ -1,14 +1,14 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert";
 import {
-  FRAME_AWARENESS,
-  FRAME_SYNC_STEP1,
-  FRAME_SYNC_STEP2,
-  FRAME_UPDATE,
   decodeFrame,
   encodeAwareness,
   encodeSyncStep1,
   encodeSyncStep2,
   encodeUpdate,
+  FRAME_AWARENESS,
+  FRAME_SYNC_STEP1,
+  FRAME_SYNC_STEP2,
+  FRAME_UPDATE,
 } from "./frames.ts";
 import { CLOSE_CODES, ERROR_CODES } from "./errors.ts";
 
@@ -35,7 +35,11 @@ Deno.test("SYNC_STEP1/2 y AWARENESS roundtrip", () => {
 });
 
 Deno.test("decodeFrame rechaza byte de tipo desconocido", () => {
-  assertThrows(() => decodeFrame(new Uint8Array([0xff, 0, 1])), Error, "UNKNOWN_MESSAGE");
+  assertThrows(
+    () => decodeFrame(new Uint8Array([0xff, 0, 1])),
+    Error,
+    "UNKNOWN_MESSAGE",
+  );
 });
 
 Deno.test("decodeFrame rechaza UPDATE sin cseq", () => {
@@ -50,9 +54,26 @@ Deno.test("byte de SYNC_STEP1 es 0x01", () => {
 });
 
 Deno.test("catálogo de errores y cierres SNP v1", () => {
-  for (const code of ["READ_ONLY", "INVALID_UPDATE", "UNKNOWN_MESSAGE"] as const) {
+  for (
+    const code of ["READ_ONLY", "INVALID_UPDATE", "UNKNOWN_MESSAGE"] as const
+  ) {
     assertEquals((ERROR_CODES as readonly string[]).includes(code), true);
   }
   assertEquals(CLOSE_CODES.PROTOCOL_VIOLATION, 4400);
   assertEquals(CLOSE_CODES.MESSAGE_TOO_LARGE, 4413);
+});
+
+Deno.test("límite 65536: borde exacto acepta, 65537 rechaza", () => {
+  const borde = new Uint8Array(65536 - 1);
+  assertEquals(encodeSyncStep1(borde).length, 65536);
+  assertThrows(
+    () => encodeSyncStep1(new Uint8Array(65536)),
+    Error,
+    "MESSAGE_TOO_LARGE",
+  );
+  assertThrows(
+    () => decodeFrame(new Uint8Array(65537)),
+    Error,
+    "MESSAGE_TOO_LARGE",
+  );
 });
