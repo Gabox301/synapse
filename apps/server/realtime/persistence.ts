@@ -253,3 +253,96 @@ export async function withDocLock<T>(
     client.release();
   }
 }
+
+export interface ListedDocument {
+  id: string;
+  title: string;
+  role: string;
+  updatedAt: string;
+  /** true si el usuario lo creó. */
+  mine: boolean;
+}
+
+/**
+ * Documentos visibles para un usuario (miembro, creador o vía workspace),
+ * sin borrados, ordenados por actividad. El rol es el de miembro, `owner`
+ * si lo creó, o `viewer` si solo lo ve por workspace.
+ */
+export async function listDocumentsForUser(userId: string): Promise<ListedDocument[]> {
+  const { rows } = await getPool().query<{
+    id: string;
+    title: string;
+    role: string | null;
+    created_by: string | null;
+    updated_at: Date | string;
+  }>(
+    `SELECT d.id, d.title, m.role, d.created_by, d.updated_at
+     FROM documents d
+     LEFT JOIN document_members m
+       ON m.document_id = d.id AND m.user_id = $1
+     LEFT JOIN workspace_members w
+       ON w.workspace_id = d.workspace_id AND w.user_id = $1
+     WHERE d.deleted_at IS NULL
+       AND (m.user_id IS NOT NULL OR d.created_by = $1 OR w.user_id IS NOT NULL)
+     ORDER BY d.updated_at DESC`,
+    [userId],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    role: r.role ?? (r.created_by === userId ? "owner" : "viewer"),
+    updatedAt: r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at),
+    mine: r.created_by === userId,
+  }));
+}
+
+export interface DocumentMember {
+  userId: string;
+  email: string;
+  role: string;
+}
+
+/** Miembros del documento con email, ordenados. */
+export async function listDocumentMembers(documentId: string): Promise<DocumentMember[]> {
+  const { rows } = await getPool().query<{
+    user_id: string;
+    email: string;
+    role: string;
+  }>(
+    `SELECT m.user_id, u.email, m.role
+     FROM document_members m
+     JOIN users u ON u.id = m.user_id
+     WHERE m.document_id = $1
+     ORDER BY u.email`,
+    [documentId],
+  );
+  return rows.map((r) => ({ userId: r.user_id, email: r.email, role: r.role }));
+}
+
+export interface DocActivity {
+  seq: number;
+  email: string | null;
+  at: string;
+}
+
+/** Últimos commits persistidos del documento (los más nuevos primero). */
+export async function recentActivity(documentId: string, limit = 8): Promise<DocActivity[]> {
+  const { rows } = await getPool().query<{
+    seq: string;
+    email: string | null;
+    created_at: Date | string;
+  }>(
+    `SELECT u.seq, e.email, u.created_at
+     FROM document_updates u
+     LEFT JOIN users e ON e.id = u.author_id
+     WHERE u.document_id = $1
+     ORDER BY u.seq DESC
+     LIMIT $2`,
+    [documentId, limit],
+  );
+  return rows.map((r) => ({
+    seq: Number(r.seq),
+    email: r.email,
+    at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
+  }));
+}

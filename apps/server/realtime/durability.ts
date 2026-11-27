@@ -22,6 +22,7 @@ export interface QueuedUpdate {
   conn: WebSocket;
   cseq: number;
   update: Uint8Array;
+  authorId?: string | null;
 }
 
 interface DocState {
@@ -165,9 +166,10 @@ export function enqueueUpdate(
   conn: WebSocket,
   cseq: number,
   update: Uint8Array,
+  authorId?: string | null,
 ): void {
   const st = stateOf(documentId);
-  st.queue.push({ conn, cseq, update });
+  st.queue.push({ conn, cseq, update, authorId: authorId ?? null });
   if (st.timer === null && !st.flushing) {
     st.timer = setTimeout(() => {
       st.timer = null;
@@ -195,11 +197,11 @@ export async function flushDocument(documentId: string): Promise<void> {
   const batch = st.queue;
   st.queue = [];
   try {
-    // author_id real llega en Etapa 4 (tickets con identidad); hoy es desconocido.
+    // author_id: lo aporta quien encola (Etapa 4+: sesión autenticada).
     const t0 = Date.now();
     const seqs = await saveBatch(
       documentId,
-      batch.map((e) => ({ data: e.update, authorId: null })),
+      batch.map((e) => ({ data: e.update, authorId: e.authorId ?? null })),
     );
     const lastSeq = seqs[seqs.length - 1] ?? st.persistedSeq;
     st.persistedSeq = lastSeq;

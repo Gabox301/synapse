@@ -66,6 +66,20 @@ export function mountEditor(
   let editor: Editor | null = null;
   let destroyed = false;
 
+  function setConn(state: "on" | "off" | "err", text: string): void {
+    for (const id of ["syn-conn", "syn-conn-top"]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.setAttribute("data-state", state);
+      el.textContent = text;
+    }
+  }
+
+  function setSeq(seq: number): void {
+    const el = document.getElementById("syn-seq");
+    if (el) el.textContent = String(seq);
+  }
+
   const client = new SynapseClient({
     documentId: opts.docId,
     ticket: opts.ticket,
@@ -88,10 +102,19 @@ export function mountEditor(
         return;
       }
       mountTiptap();
+      setConn("on", "conectado");
+      setSeq(info.seq);
+    },
+    onAck: ({ seq }) => {
+      if (!destroyed) setSeq(seq);
+    },
+    onClose: () => {
+      if (!destroyed) setConn("off", "desconectado");
     },
   });
 
   function mountTiptap(): void {
+    container.replaceChildren();
     editor = new Editor({
       element: container,
       extensions: [
@@ -109,6 +132,13 @@ export function mountEditor(
   client.setPresence({
     user: { name: opts.name ?? `anon-${client.awareness.clientID}`, color },
   });
+
+  const updateOnline = (): void => {
+    const el = document.getElementById("syn-online");
+    if (el) el.textContent = String(client.awareness.getStates().size);
+  };
+  client.awareness.on("change", updateOnline);
+  updateOnline();
 
   client.connect().catch((err: unknown) => {
     onError(

@@ -1,0 +1,664 @@
+/* Synapse shell oscuro estilo IDE: login, lista, editor (server-rendered). */
+:root {
+  color-scheme: dark;
+  --syn-bg: #1e1f24;
+  --syn-panel: #25262c;
+  --syn-card: #2a2b32;
+  --syn-ink: #e6e7eb;
+  --syn-muted: #9aa0ab;
+  --syn-line: #383a42;
+  --syn-accent: #4d8dff;
+  --syn-accent-ink: #ffffff;
+  --syn-ok: #3fb950;
+  --syn-bad: #f85149;
+  --syn-warn: #d29922;
+  --syn-danger-bg: #3d2226;
+  --syn-danger-ink: #ffb4ac;
+  --syn-radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--syn-bg);
+  color: var(--syn-ink);
+  font-family: ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ===== Auth (login + registro) ===== */
+.syn-auth {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 48px 16px;
+  display: grid;
+  gap: 16px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.syn-brand h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.syn-brand p {
+  margin: 4px 0 0;
+  color: var(--syn-muted);
+}
+
+/* ===== Topbar ===== */
+.syn-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  height: 48px;
+  background: var(--syn-panel);
+  border-bottom: 1px solid var(--syn-line);
+}
+
+.syn-topbar h1 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.syn-topbar p {
+  margin: 0;
+  color: var(--syn-muted);
+  font-size: 12px;
+}
+
+.syn-brandline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.syn-logo {
+  color: var(--syn-ink);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.syn-logo:hover {
+  color: var(--syn-accent);
+}
+
+.syn-divider {
+  color: var(--syn-muted);
+}
+
+.syn-doctitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.syn-userbox {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.syn-email {
+  color: var(--syn-muted);
+  font-size: 12px;
+}
+
+.syn-topbar nav a {
+  color: var(--syn-accent);
+  text-decoration: none;
+}
+
+/* ===== Tarjetas y listas (login + /documents) ===== */
+.syn-docs {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  display: grid;
+  gap: 16px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.syn-card {
+  background: var(--syn-card);
+  border: 1px solid var(--syn-line);
+  border-radius: var(--syn-radius);
+  padding: 20px;
+}
+
+.syn-card h2 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+form {
+  display: grid;
+  gap: 12px;
+}
+
+.syn-row {
+  grid-template-columns: 1fr auto;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+input[type="email"],
+input[type="password"],
+input[type="text"] {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 14px;
+  border: 1px solid var(--syn-line);
+  border-radius: 6px;
+  background: var(--syn-bg);
+  color: var(--syn-ink);
+}
+
+input:focus-visible {
+  outline: 2px solid var(--syn-accent);
+  outline-offset: 1px;
+  border-color: var(--syn-accent);
+}
+
+button[type="submit"] {
+  padding: 9px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 6px;
+  background: var(--syn-accent);
+  color: var(--syn-accent-ink);
+  cursor: pointer;
+}
+
+button[type="submit"]:hover {
+  filter: brightness(1.1);
+}
+
+button[type="submit"]:focus-visible {
+  outline: 2px solid var(--syn-ink);
+  outline-offset: 2px;
+}
+
+.syn-ghost {
+  background: transparent;
+  color: var(--syn-muted);
+  border: 1px solid var(--syn-line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.syn-ghost:hover {
+  color: var(--syn-ink);
+  border-color: var(--syn-muted);
+}
+
+.syn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.syn-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--syn-line);
+  border-radius: 6px;
+}
+
+.syn-list a {
+  color: var(--syn-ink);
+  font-weight: 600;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.syn-list a:hover {
+  color: var(--syn-accent);
+}
+
+.syn-role {
+  flex-shrink: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--syn-muted);
+  border: 1px solid var(--syn-line);
+  border-radius: 20px;
+  padding: 2px 10px;
+}
+
+.syn-error {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--syn-danger-bg);
+  color: var(--syn-danger-ink);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.syn-empty {
+  margin: 0;
+  color: var(--syn-muted);
+}
+
+/* ===== IDE: editor ===== */
+.syn-ide {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.syn-ide-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.syn-sidebar {
+  width: 230px;
+  flex-shrink: 0;
+  background: var(--syn-panel);
+  border-right: 1px solid var(--syn-line);
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.syn-sidehead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--syn-muted);
+  margin-bottom: 8px;
+}
+
+.syn-mini {
+  color: var(--syn-muted);
+  text-decoration: none;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.syn-mini:hover {
+  color: var(--syn-accent);
+}
+
+.syn-sidelist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.syn-sidelist a {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 4px;
+  color: var(--syn-muted);
+  text-decoration: none;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.syn-sidelist a:hover {
+  color: var(--syn-ink);
+  background: var(--syn-line);
+}
+
+.syn-sidelist .syn-active a {
+  color: var(--syn-ink);
+  background: var(--syn-line);
+}
+
+.syn-editorpane {
+  flex: 1;
+  min-width: 0;
+  padding: 20px 28px;
+  overflow-y: auto;
+}
+
+.syn-editorpane .tiptap {
+  outline: none;
+  min-height: 60vh;
+}
+
+/* ===== Statusbar ===== */
+.syn-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  height: 28px;
+  background: var(--syn-panel);
+  border-top: 1px solid var(--syn-line);
+  font-size: 12px;
+  color: var(--syn-muted);
+}
+
+.syn-sep {
+  opacity: 0.5;
+}
+
+.syn-dot::before {
+  content: "● ";
+}
+
+.syn-dot[data-state="on"]::before {
+  color: var(--syn-ok);
+}
+
+.syn-dot[data-state="off"]::before,
+.syn-dot[data-state="err"]::before {
+  color: var(--syn-bad);
+}
+
+.syn-dot[data-state="connecting"]::before {
+  color: var(--syn-warn);
+}
+
+.syn-status b {
+  color: var(--syn-ink);
+  font-weight: 600;
+}
+
+.syn-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--syn-muted);
+  min-width: 0;
+}
+
+.syn-crumbs a {
+  color: var(--syn-muted);
+  text-decoration: none;
+}
+
+.syn-crumbs a:hover {
+  color: var(--syn-accent);
+}
+
+.syn-crumbs b {
+  color: var(--syn-ink);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.syn-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.syn-tabs {
+  display: flex;
+  gap: 2px;
+  background: var(--syn-panel);
+  border-bottom: 1px solid var(--syn-line);
+  padding: 6px 12px 0;
+}
+
+.syn-tabs a {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: var(--syn-muted);
+  text-decoration: none;
+  font-size: 13px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.syn-tabs a:hover {
+  color: var(--syn-ink);
+}
+
+.syn-tabs a[aria-selected="true"] {
+  color: var(--syn-ink);
+  background: var(--syn-bg);
+  border-color: var(--syn-line);
+}
+
+.syn-filterrow {
+  margin-bottom: 8px;
+}
+
+.syn-sidesec {
+  margin-top: 14px;
+}
+
+.syn-members {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.syn-members li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.syn-members li:hover {
+  background: var(--syn-line);
+}
+
+.syn-members i {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  font-style: normal;
+  color: #101216;
+  flex-shrink: 0;
+}
+
+.syn-members span span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.syn-members small {
+  display: block;
+  color: var(--syn-muted);
+  font-size: 11px;
+}
+
+.syn-members .syn-role {
+  margin-left: auto;
+}
+
+.syn-rail {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--syn-panel);
+  border-left: 1px solid var(--syn-line);
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.syn-feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--syn-muted);
+}
+
+.syn-feed b {
+  color: var(--syn-ink);
+}
+
+.syn-feed time {
+  display: block;
+  font-size: 11px;
+}
+
+.syn-note {
+  margin: 0;
+  color: var(--syn-muted);
+  font-size: 12px;
+}
+
+.syn-st-ok {
+  color: var(--syn-ok);
+  font-size: 10px;
+}
+
+.syn-st-idle {
+  color: var(--syn-muted);
+  font-size: 10px;
+}
+
+@media (max-width: 1100px) {
+  .syn-rail {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .syn-sidebar {
+    display: none;
+  }
+
+  .syn-editorpane {
+    padding: 12px;
+  }
+
+  .syn-email {
+    display: none;
+  }
+
+  .syn-row {
+    grid-template-columns: 1fr;
+  }
+
+  .syn-crumbs {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .syn-auth {
+    padding: 32px 12px;
+  }
+}
+
+.syn-miniform {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.syn-miniform input[type="email"] {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.syn-miniform select {
+  padding: 7px 8px;
+  font-size: 13px;
+  background: var(--syn-bg);
+  color: var(--syn-ink);
+  border: 1px solid var(--syn-line);
+  border-radius: 6px;
+}
+
+.syn-miniform select:focus-visible {
+  outline: 2px solid var(--syn-accent);
+  outline-offset: 1px;
+}
+
+.syn-miniform button[type="submit"] {
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.syn-miniform .syn-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.syn-danger {
+  background: transparent;
+  color: var(--syn-danger-ink);
+  border: 1px solid var(--syn-line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button.syn-danger:hover {
+  border-color: var(--syn-bad);
+}
+
+.syn-linkbox {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.syn-linkbox input[readonly] {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  background: var(--syn-bg);
+  color: var(--syn-accent);
+  border: 1px dashed var(--syn-line);
+  border-radius: 6px;
+}

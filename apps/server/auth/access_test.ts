@@ -4,7 +4,9 @@ import {
   addDocumentMember,
   createDocument,
   removeDocumentMember,
+  removeMemberGuarded,
   resolveRole,
+  setMemberRole,
 } from "./access.ts";
 import { createUser } from "./sessions.ts";
 import { getPool } from "../realtime/persistence.ts";
@@ -74,6 +76,68 @@ Deno.test("resolveRole respeta jerarquía de acceso", async (t) => {
 
   await getPool().query("DELETE FROM documents WHERE id = $1", [docId]);
   for (const u of [creator, member, stranger]) {
+    await getPool().query("DELETE FROM users WHERE id = $1", [u]);
+  }
+});
+
+Deno.test("gestión de miembros con resguardos", async (t) => {
+  if (!await pgUp()) {
+    console.log("SKIP: sin postgres");
+    return;
+  }
+  const mkUser = async (tag: string) =>
+    await createUser({ email: `${tag}-${Date.now()}@test.local`, passwordHash: await hashPassword("x".repeat(10)) });
+  const owner = await mkUser("t5own");
+  const ed = await mkUser("t5ed");
+  const out = await mkUser("t5out");
+  const docId = await createDocument({ title: "t5", createdBy: owner });
+  await addDocumentMember(docId, ed, "editor");
+
+  async function codeOf(fn: () => Promise<unknown>): Promise<string> {
+    try {
+      await fn();
+      return "SIN_ERROR";
+    } catch (e) {
+      return String((e as Error).message).split(":")[0];
+    }
+  }
+
+  await t.step("no-owner no puede gestionar", async () => {
+    assertEquals(await codeOf(() => setMemberRole(docId, out, "viewer", ed)), "FORBIDDEN");
+    assertEquals(await codeOf(() => removeMemberGuarded(docId, ed, ed)), "FORBIDDEN");
+  });
+
+  await t.step("owner agrega y cambia rol", async () => {
+    await setMemberRole(docId, out, "viewer", owner);
+    assertEquals(await resolveRole(out, docId), "viewer");
+    await setMemberRole(docId, out, "editor", owner);
+    assertEquals(await resolveRole(out, docId), "editor");
+  });
+
+  await t.step("rol inválido se rechaza", async () => {
+    assertEquals(await codeOf(() => setMemberRole(docId, out, "admin", owner)), "INVALID_ROLE");
+  });
+
+  await t.step("no se puede dejar sin owners", async () => {
+    assertEquals(await codeOf(() => setMemberRole(docId, owner, "editor", owner)), "LAST_OWNER");
+    assertEquals(await codeOf(() => removeMemberGuarded(docId, owner, owner)), "LAST_OWNER");
+  });
+
+  await t.step("con dos owners sí se puede salir", async () => {
+    await setMemberRole(docId, ed, "owner", owner);
+    await setMemberRole(docId, owner, "editor", ed);
+    assertEquals(await resolveRole(owner, docId), "editor");
+    await removeMemberGuarded(docId, owner, ed);
+    assertEquals(await resolveRole(owner, docId), "owner");
+  });
+
+  await t.step("quitar miembro normal lo deja sin acceso", async () => {
+    await removeMemberGuarded(docId, out, ed);
+    assertEquals(await resolveRole(out, docId), null);
+  });
+
+  await getPool().query("DELETE FROM documents WHERE id = $1", [docId]);
+  for (const u of [owner, ed, out]) {
     await getPool().query("DELETE FROM users WHERE id = $1", [u]);
   }
 });

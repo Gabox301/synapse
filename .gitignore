@@ -5,6 +5,7 @@
 node_modules/
 dist/
 build/
+editor.bundle.js
 npm/
 .npm/
 
@@ -25,3 +26,4 @@ tmp/
 odd
 .atl/
 .pi
+design/

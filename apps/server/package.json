@@ -3,6 +3,9 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "build:editor": "esbuild app/actions/documents/edit/public/boot.ts --bundle --platform=browser --format=esm --outfile=app/actions/documents/edit/public/editor.bundle.js --log-level=warning"
+  },
   "dependencies": {
     "@synapse/sdk": "workspace:*",
     "@tiptap/core": "^3.35.0",
@@ -20,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.11",
-    "@types/pg": "^8.23.1"
+    "@types/pg": "^8.23.1",
+    "esbuild": "^0.28.2"
   }
 }

@@ -549,6 +549,7 @@ async function handleWS(req: Request): Promise<Response> {
           socket,
           out.appliedUpdate.cseq,
           out.appliedUpdate.payload,
+          st.auth?.userId ?? null,
         );
       }
       if (out.broadcast.length > 0) {

@@ -1529,6 +1529,7 @@
             "npm:@types/node@^26.6.11",
             "npm:@types/pg@^8.23.1",
             "npm:bcryptjs@^3.0.3",
+            "npm:esbuild@~0.28.2",
             "npm:pg@8.23.1",
             "npm:prosemirror-model@^1.25.13",
             "npm:prosemirror-state@^1.4.4",
